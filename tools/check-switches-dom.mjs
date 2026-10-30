@@ -50,10 +50,17 @@ const dom = new JSDOM(panelPage({ user: 'a' }), {
   beforeParse(w) {
     w.fetch = (u, o) => {
       if (String(o?.method || 'GET').toUpperCase() === 'POST') POSTS.push(String(o.body || ''));
+      const isModels = String(u).endsWith('/models');
       return Promise.resolve({
         ok: true,
         status: 200,
-        json: () => Promise.resolve({
+        json: () => Promise.resolve(isModels ? {
+          models: ['mimo-v2.5-tts', 'mimo-v2.5-tts-voiceclone'],
+          items: [
+            { id: 'mimo-v2.5-tts', icon: '', modalities: ['tts', 'audio-output'] },
+            { id: 'mimo-v2.5-tts-voiceclone', icon: '', modalities: ['tts', 'voice-clone', 'audio-input'] },
+          ],
+        } : {
           settings: SETTINGS,
           callbackUrl: 'https://bot.example.com/qq/cb',
           modeText: 'WebHook',
@@ -155,7 +162,26 @@ await go('设置', 500);
 await go('模型', 500);
 {
   const choices = D.querySelectorAll('[data-choice]');
-  if (choices.length !== 5) failures.push(`模型页应有 5 个站内协议下拉,实际 ${choices.length}`);
+  if (choices.length !== 6) failures.push(`模型页应有 5 个协议下拉 + 1 个 TTS 模式下拉,实际 ${choices.length}`);
+  if (!D.querySelector('#md-tts-mode')) failures.push('TTS 三模式选择器不存在');
+  const pick = D.querySelector('[data-pick="tts"]');
+  if (!pick) failures.push('TTS 模型选择弹窗按钮不存在');
+  else {
+    pick.dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+    await wait(120);
+    const cards = D.querySelectorAll('.model-item');
+    if (cards.length < 2) failures.push(`模型选择弹窗没有展示模型卡片(实际 ${cards.length})`);
+    const cloneCard = [...cards].find((c) => c.getAttribute('data-id') === 'mimo-v2.5-tts-voiceclone');
+    if (!cloneCard) failures.push('模型弹窗缺少 VoiceClone 模型');
+    else {
+      cloneCard.dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+      await wait(60);
+      if (D.querySelector('#md-tts-model').value !== 'mimo-v2.5-tts-voiceclone') failures.push('选中 VoiceClone 后模型名没有回填');
+      if (D.querySelector('#md-tts-mode').value !== 'clone') failures.push('选中 VoiceClone 后没有自动切到音色复刻模式');
+      const ref = D.querySelector('[data-mode-field="clone"]');
+      if (ref && W.getComputedStyle(ref).display === 'none') failures.push('音色复刻参考音频区域没有显示');
+    }
+  }
   const nativeProto = D.querySelector('select[id$="-proto"]');
   if (nativeProto) failures.push('模型协议仍在使用浏览器原生 select');
   const first = choices[0];

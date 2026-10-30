@@ -13,6 +13,8 @@
  * 地址栏填到 /v1 这一层即可,具体子路径在下面的 ENDPOINTS 里拼。
  */
 
+import { sampleInput } from './fixtures.js';
+
 const UA = 'NOMO-QQBot/4.0';
 const DEFAULT_TIMEOUT = 60000;
 
@@ -431,15 +433,21 @@ async function ttsMimo(m, text, opts = {}) {
   const format = String(opts.format || m.extra?.responseFormat || 'mp3').toLowerCase();
   const isClone = /voiceclone/i.test(m.model);
   const isDesign = /voicedesign/i.test(m.model);
-  const voice = opts.voice || m.extra?.voice || (isClone ? '' : 'Chloe');
+  const mode = String(opts.ttsMode || m.extra?.ttsMode || (isClone ? 'clone' : isDesign ? 'design' : 'preset'));
+  let voice = opts.voice || (mode === 'clone' ? (m.extra?.referenceAudio || m.extra?.voice || '') : (m.extra?.voice || 'Chloe'));
+  if (voice.startsWith('builtin:')) {
+    const sample = sampleInput(voice.slice('builtin:'.length) || 'asr-zh');
+    if (!sample?.audioBytes) throw new Error('内置参考音频不存在');
+    voice = `data:audio/wav;base64,${toBase64(sample.audioBytes)}`;
+  }
   const audio = { format };
-  if (isClone) {
+  if (mode === 'clone') {
     if (!voice) throw new Error('VoiceClone 需要参考音频(data:audio/...;base64,... 或音频 URL)');
     audio.voice = voice;
-  } else if (!isDesign) {
+  } else if (mode !== 'design') {
     audio.voice = voice;
   }
-  const style = String(opts.style || m.extra?.style || m.prompt || (isDesign ? '清澈自然、温和有亲和力的年轻中文女声' : '用自然清晰的中文朗读'));
+  const style = String(opts.style || m.extra?.style || m.prompt || (mode === 'design' ? '清澈自然、温和有亲和力的年轻中文女声' : '用自然清晰的中文朗读'));
   const body = {
     model: m.model,
     messages: [

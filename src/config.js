@@ -24,12 +24,12 @@ export const FIXED = {
   skillMaxInject: 6000,
   moduleMaxCode: 20000,
   siteApiPerMinute: 60,
-  appVersion: '4.3.2',
+  appVersion: '4.4.0',
   updateRepo: 'MN-LKs/NOMO-QQBot',
 };
 
 // 面板等自有页面的 CSP:不加载外部资源,只允许自身与内联脚本/样式
-export const CSP_PANEL = "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+export const CSP_PANEL = "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://cdn.simpleicons.org https://cdn.jsdelivr.net; connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 // 部署页面是 AI 生成的:允许内联脚本/样式、https 与 wss 资源,但禁止 http 与插件
 export const CSP_SITE = "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https: wss:; object-src 'none'";

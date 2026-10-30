@@ -120,6 +120,18 @@ await test('MiMo TTS 使用 chat/audio 协议并解析 message.audio.data', asyn
   assert.equal(calls[0].init.headers['api-key'], 'k');
 });
 
+await test('MiMo 音色复刻可使用内置参考音频,设计模式不预置 voice', async () => {
+  const calls = mockFetch(async () => json({ choices: [{ message: { content: '', audio: { data: 'AQID'.repeat(20), format: 'wav' } } }] }));
+  const clone = await ttsSpeech(ready('mimo-v2.5-tts-voiceclone'), '复刻文本', { ttsMode: 'clone', voice: 'builtin:asr-zh' });
+  assert.equal(clone.contentType, 'audio/wav');
+  const cloneBody = JSON.parse(calls[0].init.body);
+  assert.match(cloneBody.audio.voice, /^data:audio\/wav;base64,/);
+  await ttsSpeech(ready('mimo-v2.5-tts-voicedesign'), '设计文本', { ttsMode: 'design', style: '清澈女声' });
+  const designBody = JSON.parse(calls[1].init.body);
+  assert.equal('voice' in designBody.audio, false);
+  assert.equal(designBody.messages[0].content, '清澈女声');
+});
+
 await test('CogView 使用 size 并支持 file_url 下载', async () => {
   const calls = mockFetch(async (url) => {
     if (String(url).includes('images/generations')) {

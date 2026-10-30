@@ -12,6 +12,7 @@ import { testSearch } from '../agent/search.js';
 import { chatOnce } from '../agent/llm.js';
 import { MODEL_KINDS, ocrImage, asrAudio, ttsSpeech, generateImage, compressText, toBase64 } from '../agent/models.js';
 import { sampleInput } from '../agent/fixtures.js';
+import { modelBrief, sortForKind } from '../agent/model-catalog.js';
 import { status as storageStatus, availability, resolveStores, scanStore, storeDetail, readStoreFile, writeStoreFile, deleteStoreFile } from '../store/storage.js';
 import { S3Client } from '../store/s3.js';
 import { listModules, getModule, saveModule, removeModule, agentModules, siteModules } from '../store/modules.js';
@@ -193,13 +194,16 @@ export async function handlePanelApi(request, env, url, ctx) {
       const baseUrl = normalizeApiBase(body?.baseUrl);
       const cur = await getRaw(env);
       // 面板输入框里放的是打码值,不能拿去请求上游;掩码/空一律回退到已存的真 Key。
-      const apiKey = resolveSecret(body?.apiKey, cur.llm.apiKey);
+      const kind = String(body?.kind || '').trim();
+      const fallbackKey = cur.models?.[kind]?.apiKey || cur.llm.apiKey;
+      const apiKey = resolveSecret(body?.apiKey, fallbackKey);
       const headers = cleanHeaders(body?.headers);
-      if (!baseUrl) return jsonRes({ error: '请先填写接口地址' }, 400);
+      const actualBase = baseUrl || (kind && cur.models?.[kind]?.baseUrl) || cur.llm.baseUrl;
+      if (!actualBase) return jsonRes({ error: '请先填写接口地址' }, 400);
       if (!looksLikeUsableKey(apiKey)) {
         return jsonRes({ error: '还没有保存可用的 API Key。请在「API Key」里填入完整密钥(不要填面板显示的 sk-**** 打码值),保存后再点「模型列表」。' }, 400);
       }
-      const res = await fetch(`${baseUrl}/models`, {
+      const res = await fetch(`${actualBase}/models`, {
         headers: { ...headers, ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}), 'User-Agent': 'NOMO-QQBot/4.0' },
       });
       const text = await res.text();
@@ -214,13 +218,16 @@ export async function handlePanelApi(request, env, url, ctx) {
         .map((m) => (typeof m === 'string' ? m : m.id || m.name))
         .filter(Boolean);
       if (!list.length) return jsonRes({ error: '接口没有返回任何模型' }, 400);
-      return jsonRes({ models: list.slice(0, 300) });
+      const items = sortForKind(list.slice(0, 300).map((id) => modelBrief(id, actualBase)), kind);
+      return jsonRes({ models: items.map((x) => x.id), items, kind });
     }
 
     if (path === '/test-llm' && method === 'POST') {
       const baseUrl = normalizeApiBase(body?.baseUrl);
       const cur = await getRaw(env);
-      const apiKey = resolveSecret(body?.apiKey, cur.llm.apiKey);
+      const kind = String(body?.kind || '').trim();
+      const fallbackKey = cur.models?.[kind]?.apiKey || cur.llm.apiKey;
+      const apiKey = resolveSecret(body?.apiKey, fallbackKey);
       const headers = cleanHeaders(body?.headers);
       const model = String(body?.model || '').trim() || cur.llm.model;
       if (!looksLikeUsableKey(apiKey)) {
