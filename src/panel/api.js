@@ -331,7 +331,13 @@ export async function handlePanelApi(request, env, url, ctx) {
         if (kind === 'tts') {
           const text = String(input.text || '').trim();
           if (!text) return jsonRes({ error: '请填要念的文字' }, 400);
-          const r = await ttsSpeech(m, text, { timeoutMs: 45000 });
+          const ttsOpts = { timeoutMs: 45000 };
+          if (/voiceclone/i.test(m.model) && !m.extra?.voice) {
+            // 一键测试 VoiceClone:用内置中文语音作参考,不再要求管理员手填音频链接
+            const ref = sampleInput('asr-zh');
+            ttsOpts.voice = `data:audio/wav;base64,${toBase64(ref.audioBytes)}`;
+          }
+          const r = await ttsSpeech(m, text, ttsOpts);
           const ct = r.contentType || 'audio/mpeg';
           return jsonRes({
             ok: true, ms: Date.now() - t0,

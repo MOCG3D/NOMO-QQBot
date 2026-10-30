@@ -419,12 +419,70 @@ export async function asrAudio(m, bytes, format = 'wav', opts = {}) {
   }, { attempts: Number(opts.attempts) || 3 });
 }
 
+function isMimoModel(m) {
+  return /xiaomimimo\.com/i.test(String(m.baseUrl || '')) || /^mimo-/i.test(String(m.model || ''));
+}
+
+/**
+ * MiMo TTS 官方协议:POST /chat/completions。
+ * 合成文本在 assistant;风格/音色描述在 user;返回 message.audio.data(base64)。
+ */
+async function ttsMimo(m, text, opts = {}) {
+  const format = String(opts.format || m.extra?.responseFormat || 'mp3').toLowerCase();
+  const isClone = /voiceclone/i.test(m.model);
+  const isDesign = /voicedesign/i.test(m.model);
+  const voice = opts.voice || m.extra?.voice || (isClone ? '' : 'Chloe');
+  const audio = { format };
+  if (isClone) {
+    if (!voice) throw new Error('VoiceClone 需要参考音频(data:audio/...;base64,... 或音频 URL)');
+    audio.voice = voice;
+  } else if (!isDesign) {
+    audio.voice = voice;
+  }
+  const style = String(opts.style || m.extra?.style || m.prompt || (isDesign ? '清澈自然、温和有亲和力的年轻中文女声' : '用自然清晰的中文朗读'));
+  const body = {
+    model: m.model,
+    messages: [
+      { role: 'user', content: style },
+      { role: 'assistant', content: text },
+    ],
+    audio,
+    stream: false,
+  };
+  if (m.extra?.body && typeof m.extra.body === 'object') Object.assign(body, m.extra.body);
+  const headers = {
+    ...authHeaders(m),
+    'api-key': m.apiKey || '',
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+  };
+  const res = await withTimeout(Number(opts.timeoutMs) || timeoutOf(m), (signal) => fetch(`${baseOf(m)}/chat/completions`, {
+    method: 'POST', headers, body: JSON.stringify(body), signal,
+  }));
+  if (!res.ok) throw new Error(await readError(res));
+  const j = await res.json().catch(() => ({}));
+  if (j?.error) throw new Error(`MiMo 接口报错:${JSON.stringify(j.error).slice(0, 250)}`);
+  const msg = j?.choices?.[0]?.message || {};
+  const audioOut = msg.audio || j.audio || {};
+  const b64 = audioOut.data || msg.audio_data;
+  if (typeof b64 !== 'string' || b64.length < 32) {
+    throw new Error(`MiMo 响应没有 message.audio.data:${JSON.stringify(j).slice(0, 250)}`);
+  }
+  const actualFormat = String(audioOut.format || format || 'mp3').toLowerCase();
+  return {
+    bytes: fromBase64(b64),
+    contentType: actualFormat === 'wav' ? 'audio/wav' : 'audio/mpeg',
+    transcript: msg.content || audioOut.transcript || '',
+  };
+}
+
 /** TTS:/audio/speech。voice 按服务商规则默认成「模型ID:音色」。 */
 export async function ttsSpeech(m, text, opts = {}) {
   if (!modelReady(m)) throw new Error('语音合成模型未配置或未启用');
   const input = String(text || '').trim();
   if (!input) throw new Error('要合成的文字是空的');
   return withRetry(async () => {
+    if (isMimoModel(m)) return await ttsMimo(m, input, opts);
     const voice = String(opts.voice || m.extra?.voice || 'alex');
     const body = {
       model: m.model,
@@ -469,13 +527,19 @@ export async function generateImage(m, prompt, opts = {}) {
   const p = String(prompt || '').trim();
   if (!p) throw new Error('图片描述是空的');
   return withRetry(async () => {
+    const isCogView = /cogview/i.test(m.model) || /bigmodel\.cn/i.test(m.baseUrl);
     const body = {
       model: m.model,
       prompt: p,
-      image_size: String(opts.size || m.extra?.size || '1024x1024'),
-      batch_size: Math.max(1, Math.min(4, Number(opts.batchSize) || 1)),
-      num_inference_steps: Math.max(1, Math.min(100, Number(opts.steps || m.extra?.steps || 20))),
     };
+    if (isCogView) {
+      body.size = String(opts.size || m.extra?.size || '1024x1024');
+      if (m.extra?.watermarkEnabled !== undefined) body.watermark_enabled = m.extra.watermarkEnabled === true;
+    } else {
+      body.image_size = String(opts.size || m.extra?.size || '1024x1024');
+      body.batch_size = Math.max(1, Math.min(4, Number(opts.batchSize) || 1));
+      body.num_inference_steps = Math.max(1, Math.min(100, Number(opts.steps || m.extra?.steps || 20)));
+    }
     if (m.extra?.negativePrompt) body.negative_prompt = String(m.extra.negativePrompt);
     if (m.extra?.guidanceScale) body.guidance_scale = Number(m.extra.guidanceScale);
     if (opts.seed !== undefined || m.extra?.seed) body.seed = Number(opts.seed ?? m.extra.seed);
@@ -494,7 +558,7 @@ export async function generateImage(m, prompt, opts = {}) {
     if (typeof b64 === 'string' && b64.length > 32) {
       return { bytes: fromBase64(b64.replace(/^data:[^,]+,/, '')), contentType: 'image/png', raw: j };
     }
-    const url = first.url || first.image_url || j.url;
+    const url = first.url || first.file_url || first.image_url || j.url || j.file_url;
     if (typeof url === 'string' && url) {
       const rr = await fetch(url, { headers: { 'User-Agent': UA } });
       if (!rr.ok) throw new Error(`生成图下载失败 HTTP ${rr.status}`);

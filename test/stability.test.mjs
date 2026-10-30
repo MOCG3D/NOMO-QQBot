@@ -107,6 +107,34 @@ await test('文生图使用 image_size,429 后重试并兼容 b64_json', async (
   assert.equal('size' in body, false);
 });
 
+await test('MiMo TTS 使用 chat/audio 协议并解析 message.audio.data', async () => {
+  const calls = mockFetch(async () => json({ choices: [{ message: { content: '', audio: { data: 'AQID'.repeat(20), format: 'mp3' } } }] }));
+  const r = await ttsSpeech(ready('mimo-v2.5-tts'), '测试文本', { voice: 'Chloe' });
+  assert.equal(r.bytes.length, 60);
+  const body = JSON.parse(calls[0].init.body);
+  assert.match(calls[0].url, /\/chat\/completions$/);
+  assert.equal(body.messages[1].role, 'assistant');
+  assert.equal(body.messages[1].content, '测试文本');
+  assert.equal(body.audio.voice, 'Chloe');
+  assert.equal(body.audio.format, 'mp3');
+  assert.equal(calls[0].init.headers['api-key'], 'k');
+});
+
+await test('CogView 使用 size 并支持 file_url 下载', async () => {
+  const calls = mockFetch(async (url) => {
+    if (String(url).includes('images/generations')) {
+      return json({ data: [{ file_url: 'https://img.example/generated.png' }] });
+    }
+    return new Response(new Uint8Array([9, 8, 7]), { headers: { 'Content-Type': 'image/png' } });
+  });
+  const r = await generateImage(ready('CogView-3-Flash'), '橘猫');
+  assert.deepEqual([...r.bytes], [9, 8, 7]);
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.size, '1024x1024');
+  assert.equal('image_size' in body, false);
+  assert.equal('batch_size' in body, false);
+});
+
 await test('Agent 连续两轮工具后仍返回正文', async () => {
   let n = 0;
   mockFetch(async () => {
