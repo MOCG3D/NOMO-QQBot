@@ -6,7 +6,7 @@ export const FIXED = {
   webhookPath: '/qq/webhook',
   panelPath: '/administrator',
   llmTimeoutMs: 120000,
-  agentMaxRounds: 6,
+  agentMaxRounds: 12,
   agentMaxToolsPerRound: 4,
   agentBudgetMs: 0,
   idLen: 8,
@@ -24,7 +24,7 @@ export const FIXED = {
   skillMaxInject: 6000,
   moduleMaxCode: 20000,
   siteApiPerMinute: 60,
-  appVersion: '4.2.0',
+  appVersion: '4.3.0',
   updateRepo: 'MN-LKs/NOMO-QQBot',
 };
 
@@ -86,6 +86,7 @@ export const DEFAULT_SETTINGS = {
     concurrency: 4,
     budgetSeconds: 0,
     architectures: ['html'],
+    maxRounds: 12,
     modalities: ['text', 'image'],
     vision: false,
   },
@@ -114,6 +115,8 @@ export const DEFAULT_SETTINGS = {
     confirm: false,
     waitSeconds: 30,
     apiPerMinute: 60,
+    // Python/Lua/Ruby 等后端文件的外部执行器;JS 始终走内置沙盒
+    runtimes: {},
   },
   logs: { debug: false, retentionDays: 7, maxRows: 8000 },
   update: { check: true, repo: 'MN-LKs/NOMO-QQBot', deployHook: '', force: false, forceNote: '' },
@@ -256,6 +259,12 @@ export function flatten(settings, env = {}) {
   const apiBase = override || (sandbox ? FIXED.sandboxApiBase : FIXED.apiBase);
   const tokenUrl = override ? `${override}/app/getAppAccessToken` : FIXED.tokenUrl;
   const endpoints = deriveEndpoints(search.baseUrl, search.searchPath, search.readerPath);
+  const models = normaliseModels(settings.models);
+  for (const m of Object.values(models)) {
+    // 只复用服务商和密钥,具体端点仍由各模态独立拼接
+    if (!m.baseUrl) m.baseUrl = normalizeApiBase(llm.baseUrl);
+    if (!m.apiKey) m.apiKey = String(llm.apiKey || '').trim();
+  }
   const architectures = Array.isArray(agent.architectures)
     ? agent.architectures.filter((a) => ARCHITECTURES.includes(a))
     : ['html'];
@@ -304,6 +313,7 @@ export function flatten(settings, env = {}) {
     answerDelivery: qq.answerDelivery === 'active' ? 'active' : 'auto',
     markdownEnabled: qq.markdown === true,
     agentConcurrency: Math.max(1, Math.min(10, Number(agent.concurrency) || 4)),
+    agentMaxRounds: Math.max(2, Math.min(40, Number(agent.maxRounds) || FIXED.agentMaxRounds)),
     agentBudgetMs: Math.max(0, Number(agent.budgetSeconds) || 0) * 1000,
     visionEnabled: agent.vision === true,
     architectures,
@@ -325,12 +335,12 @@ export function flatten(settings, env = {}) {
     motdImageEnabled: settings.motd?.imageEnabled === true,
     motdTimeoutMs: Math.max(2000, Math.min(30000, Number(settings.motd?.timeoutMs) || 8000)),
     // 万能模型层:models 是加工后的五类模型配置(缺字段补默认、脏字段清掉)
-    models: normaliseModels(settings.models),
-    modelOcrReady: modelReady(normaliseModels(settings.models).ocr),
-    modelAsrReady: modelReady(normaliseModels(settings.models).asr),
-    modelTtsReady: modelReady(normaliseModels(settings.models).tts),
-    modelImageReady: modelReady(normaliseModels(settings.models).imageGen),
-    modelCompressReady: modelReady(normaliseModels(settings.models).compress),
+    models,
+    modelOcrReady: modelReady(models.ocr),
+    modelAsrReady: modelReady(models.asr),
+    modelTtsReady: modelReady(models.tts),
+    modelImageReady: modelReady(models.imageGen),
+    modelCompressReady: modelReady(models.compress),
     maxSites: Number(dep.maxProjects) || 5,
     idLen: FIXED.idLen,
     idCharset: FIXED.idCharset,

@@ -2,6 +2,7 @@
 // 这里只负责:路径规范、文本压缩(gzip)、读时按需解压。
 
 import { putObject, getObject, deleteObject, deletePrefix } from './storage.js';
+import { projectObjectKey, projectPrefix } from '../core/site-files.js';
 
 const MIME = {
   html: 'text/html; charset=utf-8',
@@ -80,12 +81,17 @@ export async function putFile(env, siteId, path, content, ct) {
       gz = 0;
     }
   }
-  const r = await putObject(env, keyFor(siteId, path), stored, { contentType: type });
+  const r = await putObject(env, keyFor(siteId, path), stored, {
+    contentType: type,
+    mapKey: (store, key) => projectObjectKey(siteId, store, key.replace(keyFor(siteId, ''), '')),
+  });
   return { rawSize, size: stored.byteLength, gz, ct: type, storeId: r.storeId, mirrors: r.mirrors };
 }
 
 export async function getFile(env, siteId, path, gz) {
-  const r = await getObject(env, keyFor(siteId, path));
+  const r = await getObject(env, keyFor(siteId, path), {
+    mapKey: (store, key) => projectObjectKey(siteId, store, key.replace(keyFor(siteId, ''), '')),
+  });
   if (!r) return null;
   const bytes = r.bytes;
   if (gz) {
@@ -103,7 +109,9 @@ export async function getFile(env, siteId, path, gz) {
  * 压缩只对文本做,文本文件不会以这两个字节开头;万一解压失败也原样返回,不会损坏数据。
  */
 export async function getFileAuto(env, siteId, path) {
-  const r = await getObject(env, keyFor(siteId, path));
+  const r = await getObject(env, keyFor(siteId, path), {
+    mapKey: (store, key) => projectObjectKey(siteId, store, key.replace(keyFor(siteId, ''), '')),
+  });
   if (!r) return null;
   const bytes = r.bytes;
   if (bytes.length > 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) {
@@ -117,5 +125,7 @@ export async function getFileAuto(env, siteId, path) {
 }
 
 export async function delAll(env, siteId) {
-  return await deletePrefix(env, `f/${siteId}/`);
+  return await deletePrefix(env, `f/${siteId}/`, {
+    mapPrefix: (store) => projectPrefix(siteId, store),
+  });
 }

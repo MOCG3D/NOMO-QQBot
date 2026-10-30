@@ -9,7 +9,7 @@ import { chunkText, sealFenceChunks, stripMention, toPlainText, truncate } from 
 import { enhanceFiles } from '../util/seo.js';
 import { fetchAccessToken, deliver, deliverMedia, muteGroupMember, unmuteGroupMember, explainError, sendGroupMarkdown, sendC2CMarkdown } from '../qq/api.js';
 import { runAgent } from '../agent/loop.js';
-import { ocrImage, asrAudio, ttsSpeech, compressText, audioContentType } from '../agent/models.js';
+import { ocrImage, asrAudio, ttsSpeech, compressText, audioContentType, UA as MODEL_UA } from '../agent/models.js';
 import { buildCompressPrompt, buildHelpText, buildHelpMarkdown, buildMenuText } from '../agent/prompt.js';
 import { chatWithFallback } from '../agent/llm.js';
 import { parseMotdTarget, queryMotd, formatMotdText, fetchMotdImage } from '../agent/motd.js';
@@ -320,6 +320,8 @@ Object.assign(BotCore.prototype, {
     log(`[收到] ${p.scene} ${p.nickname || p.userId || ''} type=${p.type || '?'} mentioned=${mentioned} :: ${truncate(text, 120)}`
       + (incoming.attachments ? ` ${incoming.attachments}` : '') + (incoming.quote ? ' [带引用]' : ''));
 
+    this.rememberMemberRole(p);
+
     // 群消息缓存(group_recent / group_find 用):全量接收模式下,没 @机器人 的消息也存下来
     if (p.scene === 'group' && p.targetId && p.mentioned !== undefined && cfg.groupsCacheEnabled) {
       try {
@@ -551,7 +553,7 @@ Object.assign(BotCore.prototype, {
     if (voices.length && cfg.modelAsrReady) {
       try {
         const a = voices[0];
-        const res = await fetch(a.url, { headers: { 'User-Agent': UA } });
+        const res = await fetch(a.url, { headers: { 'User-Agent': MODEL_UA } });
         if (!res.ok) throw new Error(`语音下载失败 HTTP ${res.status}`);
         const buf = new Uint8Array(await res.arrayBuffer());
         if (buf.length > 8 * 1024 * 1024) throw new Error('语音太大(超过 8MB)');
@@ -651,11 +653,32 @@ Object.assign(BotCore.prototype, {
 
   },
 
+  // 群消息事件带 member_role,按钮事件通常不带。把角色按群+人缓存下来,
+  // 审批时回查;这样 QQ 群主/管理员不再因为回调缺字段被误判成普通成员。
+  rememberMemberRole(p) {
+    if (p?.scene !== 'group' || !p.targetId || !p.userId) return;
+    const role = String(p.memberRole || '').toLowerCase();
+    if (!['admin', 'owner', 'member'].includes(role)) return;
+    const key = `role:${p.targetId}:${p.userId}`;
+    this.sql.exec('INSERT INTO kv (k, v, exp) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v, exp = excluded.exp',
+      key, role, Date.now() + 30 * 86400000);
+  },
+
+  cachedMemberRole(p) {
+    if (p?.scene !== 'group' || !p.targetId || !p.userId) return '';
+    const rows = this.sql.exec('SELECT v, exp FROM kv WHERE k = ?', `role:${p.targetId}:${p.userId}`).toArray();
+    if (!rows.length || Number(rows[0].exp) < Date.now()) return '';
+    return String(rows[0].v || '');
+  },
+
   isAdmin(cfg, p) {
     const admins = cfg.settings.admin.openIds || [];
-    if (admins.some((a) => a.openid === p.userId)) return true;
-    if (cfg.settings.admin.groupAdmins && p.scene === 'group'
-      && (p.memberRole === 'admin' || p.memberRole === 'owner')) return true;
+    const uid = String(p?.userId || '');
+    if (uid && admins.some((a) => String(a.openid || '') === uid)) return true;
+    if (cfg.settings.admin.groupAdmins && p?.scene === 'group') {
+      const role = String(p.memberRole || this.cachedMemberRole(p) || '').toLowerCase();
+      if (role === 'admin' || role === 'owner') return true;
+    }
     return false;
   },
 
@@ -920,6 +943,8 @@ Object.assign(BotCore.prototype, {
       this.sql.exec('DELETE FROM pending WHERE token = ?', t);
       return null;
     }
+    // notified=1 表示已被某次点击/超时流程认领,不能再被第二次消费
+    if (Number(row.notified || 0) === 1) return null;
     let payload = {};
     try {
       payload = JSON.parse(row.payload);
@@ -929,19 +954,38 @@ Object.assign(BotCore.prototype, {
     return { ...row, payload };
   },
 
+  // 同步认领。DO 内这段没有 await,两个并发点击不会同时通过。
+  claimPending(token) {
+    const rows = this.sql.exec('SELECT * FROM pending WHERE token = ?', token).toArray();
+    if (!rows.length) return null;
+    const row = rows[0];
+    if (Number(row.notified || 0) === 1 || Number(row.expires_at) < Date.now()) return null;
+    this.sql.exec('UPDATE pending SET notified = 1, notify_ts = ? WHERE token = ? AND notified = 0', Date.now(), token);
+    let payload = {};
+    try { payload = JSON.parse(row.payload); } catch { payload = {}; }
+    return { ...row, notified: 1, payload };
+  },
+
+  releasePending(token) {
+    this.sql.exec('UPDATE pending SET notified = 0, notify_ts = NULL WHERE token = ?', token);
+  },
+
   async resolvePending(token, approve, { notify = true } = {}) {
-    const row = await this.getPending(token);
-    if (!row) return { error: '确认链接已过期或已经处理过了' };
-    this.sql.exec('DELETE FROM pending WHERE token = ?', row.token);
+    const row = this.claimPending(String(token || '').trim());
+    if (!row) return { error: '确认链接已过期、已处理,或正在被另一次操作处理' };
     if (!approve) {
+      this.sql.exec('DELETE FROM pending WHERE token = ?', row.token);
       if (notify) await this.notifyPending(row, '已取消这次部署。');
       return { ok: true, canceled: true, row };
     }
     const r = await this.createSite(row.payload);
     if (r.error) {
-      if (notify) await this.notifyPending(row, `部署失败:${r.error}`);
+      // 部署失败不能把单据吞掉:释放给管理员重试或取消。
+      this.releasePending(row.token);
+      if (notify) await this.notifyPending(row, `部署失败:${r.error}\n可以重试确认,或点击取消。`);
       return { error: r.error, row };
     }
+    this.sql.exec('DELETE FROM pending WHERE token = ?', row.token);
     if (notify) await this.notifyPending(row, `部署成功:${r.url}\n项目:${r.name}\n存活 ${r.ttlMinutes} 分钟。`);
     return { ok: true, site: r, row };
   },
@@ -1176,9 +1220,12 @@ Object.assign(BotCore.prototype, {
     if (!p?.targetId || !p?.scene) return { ok: false, error: '没有会话目标' };
     const token = await this.getToken();
     const admins = (cfg.settings.admin.openIds || []).map((x) => String(x.openid || '')).filter(Boolean);
-    const permission = admins.length
+    // 机器人管理员列表与 QQ 群主/管理员是两套身份,单个 permission 无法同时表达。
+    // 有任一名单时用 type 0 精确限制;两边都要支持时放开点击,由 isAdmin 服务端复核,
+    // 防止「机器人管理员」被 QQ 客户端直接拦在按钮外。
+    const permission = (admins.length && !cfg.settings.admin.groupAdmins)
       ? { type: 0, specify_user_ids: admins.slice(0, 10) }
-      : { type: 1 };
+      : { type: 2 };
     const buttons = [
       {
         id: 'approve',
@@ -1207,7 +1254,7 @@ Object.assign(BotCore.prototype, {
     const files = Array.isArray(pending.files) ? pending.files : [];
     const arch = Array.isArray(pending.architectures) ? pending.architectures : ['html'];
     const archText = [
-      arch.includes('custom') ? '自定义后端(_backend.js)' : '',
+      arch.includes('custom') ? '自定义后端(backend/*.js 等多文件)' : '',
       arch.includes('prefab') ? '预制后端接口' : '',
     ].filter(Boolean).join(' + ') || '纯静态网页';
     const waitSec = Math.max(10, Math.min(100, Number(cfg.deployWaitSeconds) || 30));

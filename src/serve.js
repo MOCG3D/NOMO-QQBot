@@ -3,7 +3,8 @@ import { getProject, bumpHits, dataGet, dataSet, dataDel, dataList } from './sto
 import { getFileAuto, mimeFor } from './store/kvfile.js';
 import { bump, bumpDaily } from './store/stats.js';
 import { getModule } from './store/modules.js';
-import { execBackend, sandboxFetch, normalizeBackendResult } from './core/backend.js';
+import { execBackend, execBackendFile, sandboxFetch, normalizeBackendResult } from './core/backend.js';
+import { isBackendPath, backendCandidates } from './core/site-files.js';
 import { logWrite } from './store/logs.js';
 import { isSiteId } from './util/id.js';
 
@@ -130,8 +131,8 @@ export async function serveSite(env, cfg, request, url, ctx) {
   }
 
   const filePath = rest || 'index.html';
-  // 自定义后端只由 /api/ 路由执行,永远不当作静态文件公开
-  if (filePath === '_backend.js') return page('404', `找不到文件 ${filePath}`);
+  // 所有后端源码、路由清单和运行时配置都只由 /api/ 执行,绝不公开
+  if (isBackendPath(filePath)) return page('404', `找不到文件 ${filePath}`);
   // 直读 KV(靠魔数判断是否压缩),不再先查一次 D1 文件表 —— 少一次查询,页面更快
   const bytes = await getFileAuto(env, id, filePath);
   if (!bytes) {
@@ -205,39 +206,46 @@ export async function handleSiteApi(env, cfg, request, url) {
     }
   }
 
-  // 2) 站点自定义后端(_backend.js)
+  // 2) 站点自定义后端(支持 backend/、_backend/、*.backend.* 多文件与多语言)
   if (cfg.canCustomBackend) {
     const siteId = siteFromReferer(request);
     if (siteId && isSiteId(siteId)) {
       const p = await getProject(env, siteId);
       if (p && Number(p.expires_at) > Date.now()) {
-        const codeBytes = await getFileAuto(env, siteId, '_backend.js');
-        if (codeBytes) {
-          const bodyText = method === 'POST' ? await request.text() : '';
-          if (bodyText.length > 256 * 1024) return json({ error: '请求体太大' }, 413);
-          const r = await execBackend(new TextDecoder().decode(codeBytes), {
-            method,
-            path: rest,
-            query: queryObject(url),
-            headers: publicHeaders(request),
-            body: bodyText,
-            json: () => JSON.parse(bodyText || '{}'),
-            store: {
-              get: (k) => dataGet(env, siteId, k),
-              set: async (k, v) => {
-                const rr = await dataSet(env, siteId, String(k), typeof v === 'string' ? v : JSON.stringify(v), cfg.dataQuotaBytes);
-                if (rr.error) throw new Error(rr.error);
-                return true;
+        const bodyText = method === 'POST' ? await request.text() : '';
+        if (bodyText.length > 256 * 1024) return json({ error: '请求体太大' }, 413);
+        for (const candidate of backendCandidates(rest)) {
+          const codeBytes = await getFileAuto(env, siteId, candidate);
+          if (!codeBytes) continue;
+          const r = await execBackendFile({
+            path: candidate,
+            code: new TextDecoder().decode(codeBytes),
+            settings: cfg.settings,
+            ctx: {
+              method,
+              path: rest,
+              query: queryObject(url),
+              headers: publicHeaders(request),
+              body: bodyText,
+              json: () => JSON.parse(bodyText || '{}'),
+              store: {
+                get: (k) => dataGet(env, siteId, k),
+                set: async (k, v) => {
+                  const rr = await dataSet(env, siteId, String(k), typeof v === 'string' ? v : JSON.stringify(v), cfg.dataQuotaBytes);
+                  if (rr.error) throw new Error(rr.error);
+                  return true;
+                },
+                del: (k) => dataDel(env, siteId, k),
+                list: () => dataList(env, siteId),
               },
-              del: (k) => dataDel(env, siteId, k),
-              list: () => dataList(env, siteId),
+              fetch: (u, init) => sandboxFetch(u, init, 15000),
+              now: () => Date.now(),
             },
-            fetch: (u, init) => sandboxFetch(u, init, 15000),
-            now: () => Date.now(),
-          }, { timeoutMs: 5000 });
+            timeoutMs: 5000,
+          });
           if (!r.ok) {
-            await logWrite(env, 'warn', 'site', `站点 ${siteId} 后端执行失败:${r.error}`).catch(() => null);
-            return json({ error: `后端执行失败:${r.error}` }, 500);
+            await logWrite(env, 'warn', 'site', `站点 ${siteId} 后端 ${candidate} 执行失败:${r.error}`).catch(() => null);
+            return json({ error: `后端执行失败:${r.error}`, file: candidate }, 500);
           }
           return backendResponse(r.value);
         }

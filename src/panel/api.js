@@ -11,6 +11,7 @@ import { listMcp, addMcp, updateMcp, removeMcp, testMcp } from '../agent/mcp.js'
 import { testSearch } from '../agent/search.js';
 import { chatOnce } from '../agent/llm.js';
 import { MODEL_KINDS, ocrImage, asrAudio, ttsSpeech, generateImage, compressText, toBase64 } from '../agent/models.js';
+import { sampleInput } from '../agent/fixtures.js';
 import { status as storageStatus, availability, resolveStores, scanStore, storeDetail, readStoreFile, writeStoreFile, deleteStoreFile } from '../store/storage.js';
 import { S3Client } from '../store/s3.js';
 import { listModules, getModule, saveModule, removeModule, agentModules, siteModules } from '../store/modules.js';
@@ -300,27 +301,35 @@ export async function handlePanelApi(request, env, url, ctx) {
       if (!m.baseUrl && !cfg.llmBaseUrl) return jsonRes({ error: '既没有填这一类接口地址,主接口地址也是空的' }, 400);
       if (!m.model) return jsonRes({ error: '模型名还是空的,请先填写模型名并保存' }, 400);
       const t0 = Date.now();
+      const sample = sampleInput(String(body?.sample || '')) || {};
+      const input = { ...sample, ...(body || {}) };
       try {
         if (kind === 'ocr') {
-          const src = String(body?.img || '').trim();
+          const src = String(input.img || '').trim();
           if (!src) return jsonRes({ error: '请填一张图片地址(https 或 data:image/…)' }, 400);
           const r = await ocrImage(m, src, { timeoutMs: 45000 });
           return jsonRes({ ok: true, ms: Date.now() - t0, text: String(r.text || ''), note: `识别到 ${String(r.text || '').length} 个字符` });
         }
         if (kind === 'asr') {
-          const src = String(body?.audio || '').trim();
-          if (!src) return jsonRes({ error: '请填一段音频地址' }, 400);
-          const u = new URL(src);
-          const res = await fetch(u, { headers: { 'User-Agent': UA } });
-          if (!res.ok) throw new Error(`音频下载失败 HTTP ${res.status}`);
-          const buf = new Uint8Array(await res.arrayBuffer());
-          const ct = String(res.headers.get('content-type') || 'audio/wav');
+          const src = String(input.audio || '').trim();
+          if (!src && !input.audioBytes) return jsonRes({ error: '请填一段音频地址,或选择内置示例' }, 400);
+          let buf;
+          let ct = 'audio/wav';
+          if (input.audioBytes) {
+            buf = input.audioBytes;
+          } else {
+            const u = new URL(src);
+            const res = await fetch(u, { headers: { 'User-Agent': UA } });
+            if (!res.ok) throw new Error(`音频下载失败 HTTP ${res.status}`);
+            buf = new Uint8Array(await res.arrayBuffer());
+            ct = String(res.headers.get('content-type') || 'audio/wav');
+          }
           const fmt = ct.includes('mpeg') ? 'mp3' : ct.includes('amr') ? 'amr' : 'wav';
           const r = await asrAudio(m, buf, fmt, { timeoutMs: 60000 });
           return jsonRes({ ok: true, ms: Date.now() - t0, text: String(r.text || ''), note: `识别到 ${String(r.text || '').length} 个字符` });
         }
         if (kind === 'tts') {
-          const text = String(body?.text || '').trim();
+          const text = String(input.text || '').trim();
           if (!text) return jsonRes({ error: '请填要念的文字' }, 400);
           const r = await ttsSpeech(m, text, { timeoutMs: 45000 });
           const ct = r.contentType || 'audio/mpeg';
@@ -332,9 +341,9 @@ export async function handlePanelApi(request, env, url, ctx) {
           });
         }
         if (kind === 'imageGen') {
-          const prompt = String(body?.prompt || '').trim();
+          const prompt = String(input.prompt || '').trim();
           if (!prompt) return jsonRes({ error: '请填要画的内容' }, 400);
-          const r = await generateImage(m, prompt, { size: body?.size, timeoutMs: 60000 });
+          const r = await generateImage(m, prompt, { size: input.size, timeoutMs: 60000 });
           return jsonRes({
             ok: true, ms: Date.now() - t0,
             text: `图片 ${Math.round(r.bytes.length / 1024)} KB`,
@@ -342,7 +351,7 @@ export async function handlePanelApi(request, env, url, ctx) {
           });
         }
         if (kind === 'compress') {
-          const text = String(body?.text || '').trim();
+          const text = String(input.text || '').trim();
           if (!text) return jsonRes({ error: '请填要压缩的长文本' }, 400);
           const r = await compressText(m, text, { timeoutMs: 60000 });
           const out = String(r.text || '');
@@ -755,6 +764,8 @@ async function storageApi(env, seg, method, body, url) {
       const sk = String(src.secretKey ?? '').trim();
       next.secretKey = resolveSecret(sk, cur.secretKey);
       next.pathStyle = src.pathStyle !== false;
+      // 仅对有限制的外部队列启用;旧项目仍按原 key 读取,不会丢文件
+      next.compatTxt = src.compatTxt === true || src.compatMode === 'txt';
       if (!next.endpoint || !next.bucket || !next.accessKey || !next.secretKey) {
         return jsonRes({ error: 'S3 需要填全:endpoint / bucket / AccessKey / SecretKey' }, 400);
       }

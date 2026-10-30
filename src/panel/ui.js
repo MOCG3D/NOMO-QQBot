@@ -171,6 +171,7 @@ textarea.t{resize:vertical;min-height:74px;line-height:1.55}
 textarea.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
 .row>div{flex:1;min-width:170px}
+.choice{position:relative}.choice-btn{text-align:left;cursor:pointer;width:100%}.choice-menu{display:none;position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:70;background:var(--card);border:1px solid var(--line);border-radius:8px;box-shadow:0 12px 30px rgba(15,23,42,.18);overflow:hidden;max-height:260px;overflow-y:auto}.choice-menu.show{display:block}.choice-menu.up{top:auto;bottom:calc(100% + 4px)}.choice-opt{padding:9px 11px;cursor:pointer;border-bottom:1px solid var(--line)}.choice-opt:last-child{border-bottom:0}.choice-opt:hover{background:#eff6ff}.choice-opt b{display:block;font-size:12.5px}.choice-opt span{display:block;font-size:11px;color:var(--dim);margin-top:2px}
 .fld{margin-bottom:13px}
 .btn{padding:8px 15px;border-radius:7px;border:1px solid var(--line);background:#fff;color:#334155;font-size:13px;
 cursor:pointer;transition:.12s;font-family:inherit;white-space:nowrap}
@@ -398,6 +399,31 @@ function confirmBox(title,text,onOk,danger){
 function sw(on,attr){return '<div class="sw'+(on?' on':'')+'" '+attr+'></div>'}
 
 // 拼出 [data-t="x"] 或 [data-mod="x"],避开在模板字符串里反复转义引号
+// 站内下拉选择器:不用浏览器原生弹窗,选项说明直接展示在菜单里。
+function choice(id,options,current){
+ var cur=options.filter(function(o){return o[0]===current})[0]||options[0];
+ return '<div class="choice" data-choice="'+id+'"><input type="hidden" id="'+id+'" value="'+h(cur[0])+'">'+
+  '<button type="button" class="t choice-btn" data-choice-open>'+h(cur[1])+'</button>'+
+  '<div class="choice-menu">'+options.map(function(o){
+   return '<div class="choice-opt" data-v="'+h(o[0])+'"><b>'+h(o[1])+'</b>'+(o[2]?'<span>'+h(o[2])+'</span>':'')+'</div>'}).join('')+'</div></div>';
+}
+function bindChoices(root){
+ root.querySelectorAll('[data-choice]').forEach(function(box){
+  var btn=box.querySelector('[data-choice-open]'),menu=box.querySelector('.choice-menu'),input=box.querySelector('input');
+  btn.onclick=function(e){e.stopPropagation();
+   root.querySelectorAll('.choice-menu.show').forEach(function(x){if(x!==menu)x.classList.remove('show')});
+   menu.classList.toggle('show');
+   if(menu.classList.contains('show')){
+    var r=btn.getBoundingClientRect(),spaceBelow=window.innerHeight-r.bottom;
+    menu.classList.toggle('up',spaceBelow<260);
+   }
+  };
+  box.querySelectorAll('.choice-opt').forEach(function(opt){opt.onclick=function(){
+   input.value=opt.getAttribute('data-v');btn.textContent=opt.querySelector('b').textContent;
+   input.dispatchEvent(new Event('change',{bubbles:true}));menu.classList.remove('show');
+  }});
+ });
+}
 function selAttr(attr){return '[data-t="'+attr+'"]'}
 
 // 开关统一绑定入口:点一下立刻翻转并保存。
@@ -694,7 +720,7 @@ function pageNew(){
     '<option value="custom"'+(backendMode==='custom'?' selected':'')+'>自定义 _backend.js(沙盒执行)</option>'+
     '<option value="prefab"'+(backendMode==='prefab'?' selected':'')+'>预制后端模块(管理员在「模块」里勾了站点后端)</option>'+
    '</select><div class="hint" id="backend-hint" style="margin-top:8px">'+
-    (backendMode==='custom'?'已加入 _backend.js 模板:用 ctx.method / ctx.path / ctx.body / ctx.store 读写数据,return 返回结果。':
+    (backendMode==='custom'?'已加入 _backend.js 兼容模板(也可以新建 backend/xxx.js 等多个后端文件):用 ctx.method / ctx.path / ctx.body / ctx.store 读写数据,return 返回结果。':
      backendMode==='prefab'?(siteModules.length?'可用模块:'+siteModules.map(function(m){return m.id+'('+m.name+')'}).join('、')+'。页面里 fetch("/api/模块id") 即可调用。<div style="margin-top:8px"><button class="btn sm" id="insert-prefab">插入调用示例</button></div>':'还没有勾了「站点后端」的预制模块,先去「模块」页配置。'):
      '页面里可以用 fetch("./__data/键") 读写简易数据;需要服务端逻辑时再选自定义或预制后端。')+
    '</div></div>'+
@@ -904,10 +930,10 @@ function pageModels(){
    ['tts','语音合成 TTS','把回复念成语音,通过 QQ 语音消息发出去。'],
    ['imageGen','图像生成','按描述生成图片,通过 QQ 图片消息发出去。配好后 AI 会多一个 draw_image 工具。'],
    ['compress','摘要压缩','对话太长时压成摘要,省上下文。不配就用主对话模型压。']];
-  var PROTOS=[['chat',' 兼容(/chat/completions)'],
-   ['responses','Responses API(/responses)'],
-   ['google','Google(/models/x:generateContent)'],
-   ['claude',' 兼容(/v1/messages)']];
+  var PROTOS=[['chat',' 兼容','POST /chat/completions;视觉 OCR 与文本压缩'],
+   ['responses','Responses API','POST /responses;新版  风格'],
+   ['google','Google','POST /models/{model}:generateContent'],
+   ['claude',' 兼容','POST /v1/messages;Anthropic 风格']];
   var html='<div class="card"><h3>万能模型层</h3><div class="sub">主对话模型之外,再配几类专用模型。每一类都独立配地址、Key、模型名和协议,可以指向不同服务商;哪一类没配,对应功能自动关掉,不影响其它功能。</div>';
   html+='<div class="hint" style="margin-bottom:12px">主对话模型在「Agent 配置」页设置,这里只配辅助模型。密钥输入框<b>留空表示不修改</b>,保存后显示的是打码值。</div>';
   KINDS.forEach(function(k){
@@ -919,8 +945,7 @@ function pageModels(){
     '<div class="row"><div><label class="f">接口地址</label><input class="t mono" id="'+id+'-url" value="'+h(x.baseUrl||'')+'" placeholder="留空则复用主接口地址"></div>'+
     '<div><label class="f">模型名</label><input class="t mono" id="'+id+'-model" value="'+h(x.model||'')+'" placeholder="例如 qwen-vl-ocr / whisper-1"></div></div>'+
     '<div class="row" style="margin-top:8px"><div><label class="f">API Key</label><input class="t mono" id="'+id+'-key" value="" placeholder="'+(x.apiKey?'已保存 '+h(x.apiKey)+' · 留空不修改':'留空则复用主接口 Key')+'"></div>'+
-    '<div><label class="f">协议</label><select class="t" id="'+id+'-proto">'+PROTOS.map(function(p){
-     return '<option value="'+p[0]+'"'+(x.protocol===p[0]?' selected':'')+'>'+h(p[1])+'</option>'}).join('')+'</select></div></div>'+
+    '<div><label class="f">协议</label>'+choice(id+'-proto',PROTOS,x.protocol||'chat')+'</div></div>'+
     '<div class="fld" style="margin-top:8px"><label class="f">附加提示词(可选)</label><input class="t" id="'+id+'-prompt" value="'+h(x.prompt||'')+'" placeholder="留空用内置提示词"></div>'+
     '<div style="display:flex;gap:10px;margin-top:10px;align-items:center">'+
      '<button class="btn pri" data-msave="'+k[0]+'">保存这一类</button>'+
@@ -929,6 +954,7 @@ function pageModels(){
   });
   html+='</div>';
   v.innerHTML=html;
+  bindChoices(v);
 
   function savePatch(patch,btn){
    if(btn){btn.disabled=true;btn.textContent='保存中…'}
@@ -962,43 +988,61 @@ function pageModels(){
   });
  }).catch(function(e){v.innerHTML='<div class="card"><div class="empty">'+h(e.message)+'</div></div>'});
 }
-// 模型测试弹窗:按模型类型给不同输入表单,结果直接预览(文字/图片/音频)
+// 模型测试弹窗:内置示例一键测试,也允许自定义输入;结果在站内预览。
 function openModelTest(kind){
  var T={
-  ocr:{title:'测试图片识别',fields:[['img','图片地址','https://… 或 data:image/png;base64,…']],btn:'识别'},
-  asr:{title:'测试语音识别',fields:[['audio','音频地址','https://… (wav / mp3)']],btn:'识别'},
-  tts:{title:'测试语音合成',fields:[['text','要念的文字','你好,这是一段测试语音']],btn:'合成'},
-  imageGen:{title:'测试图像生成',fields:[['prompt','要画的内容','一只戴墨镜的橘猫在冲浪'],['size','尺寸','1024x1024']],btn:'生成'},
-  compress:{title:'测试摘要压缩',fields:[['text','要压缩的长文本','粘贴一段长对话']],btn:'压缩'},
+  ocr:{title:'测试图片识别',fields:[['img','自定义图片地址(可留空)','https://… 或 data:image/png;base64,…']],btn:'识别'},
+  asr:{title:'测试语音识别',fields:[['audio','自定义音频地址(可留空)','https://… (wav / mp3)']],btn:'识别'},
+  tts:{title:'测试语音合成',fields:[['text','要念的文字(可留空)','你好,这是一段测试语音']],btn:'合成'},
+  imageGen:{title:'测试图像生成',fields:[['prompt','要画的内容(可留空)','一只戴墨镜的橘猫在冲浪'],['size','尺寸','1024x1024']],btn:'生成'},
+  compress:{title:'测试摘要压缩',fields:[['text','要压缩的长文本(可留空)','粘贴一段长对话']],btn:'压缩'},
  }[kind]||{title:'测试',fields:[['text','输入','']],btn:'测试'};
- var body='<div class="hint" style="margin-bottom:10px">用当前已保存的配置调用;改过配置请先点「保存这一类」。</div>';
+ var S={
+  ocr:[['ocr-zh','中文测试图'],['ocr-en','英文测试图']],
+  asr:[['asr-zh','中文测试音频'],['asr-en','英文测试音频']],
+  tts:[['tts-zh','中文合成文本']],
+  imageGen:[['image-cat','橘猫冲浪图像']],
+  compress:[['compress-chat','多轮对话摘要']],
+ }[kind]||[];
+ var body='<div class="hint" style="margin-bottom:10px">用当前已保存的配置调用;改过配置请先点「保存这一类」。<b>不需要手填测试链接</b>,直接点下面的内置示例即可。</div>';
+ body+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">'+S.map(function(x){
+  return '<button class="btn sm" data-sample="'+x[0]+'">'+h(x[1])+'</button>'}).join('')+'</div>';
+ body+='<details style="margin-bottom:10px"><summary class="small dim">或手动填写测试数据</summary>';
  T.fields.forEach(function(f){
-  body+='<div class="fld"><label class="f">'+h(f[1])+'</label><input class="t" id="mt-'+f[0]+'" placeholder="'+h(f[2])+'"></div>';
+  body+='<div class="fld" style="margin-top:10px"><label class="f">'+h(f[1])+'</label><input class="t" id="mt-'+f[0]+'" placeholder="'+h(f[2])+'"></div>';
  });
+ body+='<button class="btn sm" id="mt-custom">使用手动输入'+h(T.btn)+'</button></details>';
  body+='<div id="mt-out" class="hint" style="margin-top:10px"></div>';
- var m=modal(T.title,body,'<button class="btn pri" id="mt-go">'+h(T.btn)+'</button> <button class="btn" data-x>关闭</button>');
+ var m=modal(T.title,body,'<button class="btn" data-x>关闭</button>');
  m.querySelector('[data-x]').onclick=function(){m.remove()};
- m.querySelector('#mt-go').onclick=function(){
-  var b=this;b.disabled=true;b.textContent='请求中…';
-  var out=m.querySelector('#mt-out');out.textContent='';
+ function run(extra){
+  var out=m.querySelector('#mt-out');
+  out.textContent='请求中…(超时/限流/5xx 会在后台自动重试)';
+  m.querySelectorAll('button').forEach(function(b){b.disabled=true});
   var args={kind:kind};
   T.fields.forEach(function(f){args[f[0]]=m.querySelector('#mt-'+f[0]).value.trim()});
+  Object.assign(args,extra||{});
   api('/test-model',{method:'POST',body:args}).then(function(r){
-   b.disabled=false;b.textContent=T.btn;
+   m.querySelectorAll('button').forEach(function(b){b.disabled=false});
    if(r.error){out.innerHTML='<b style="color:#b91c1c">失败:</b>'+h(r.error);return}
    out.innerHTML='<b style="color:#15803d">成功</b> · 耗时 '+h(String(r.ms||0))+'ms'+
     (r.text?'<pre class="code" style="margin-top:8px;max-height:220px;overflow:auto">'+h(r.text)+'</pre>':'')+
     (r.imageData?'<img src="'+r.imageData+'" style="max-width:100%;margin-top:8px;border-radius:8px">':'')+
     (r.audioData?'<audio controls src="'+r.audioData+'" style="width:100%;margin-top:8px"></audio>':'')+
     (r.note?'<div class="small dim" style="margin-top:6px">'+h(r.note)+'</div>':'');
-  }).catch(function(e){b.disabled=false;b.textContent=T.btn;out.innerHTML='<b style="color:#b91c1c">失败:</b>'+h(e.message)});
- };
+  }).catch(function(e){
+   m.querySelectorAll('button').forEach(function(b){b.disabled=false});
+   out.innerHTML='<b style="color:#b91c1c">失败:</b>'+h(e.message);
+  });
+ }
+ m.querySelectorAll('[data-sample]').forEach(function(b){b.onclick=function(){run({sample:b.getAttribute('data-sample')})}});
+ m.querySelector('#mt-custom').onclick=function(){run({})};
 }
 function pageSettings(){
  setTitle('设置');
  var v=el('view');v.innerHTML='<div class="empty">加载中…</div>';
  loadSettings(true).then(function(d){
-  var s=d.settings,llm=s.llm,se=s.search,qq=s.qq,dep=s.deploy,lg=s.logs,gr=s.groups,ad=s.admin,ag=s.agent||{},ui=s.ui||{},dash=s.dashboard||{},upd=s.update||{};
+  var s=d.settings,llm=s.llm,se=s.search,qq=s.qq,dep=s.deploy,lg=s.logs,gr=s.groups,ad=s.admin,ag=s.agent||{},ui=s.ui||{},dash=s.dashboard||{},upd=s.update||{},rts=dep.runtimes||{};
   var headers=function(o){return h(JSON.stringify(o||{},null,0))};
   var mapObj=se.response||{},mapText=Object.keys(mapObj).some(function(k){return mapObj[k]})?JSON.stringify(mapObj):'';
   v.innerHTML=
@@ -1055,9 +1099,15 @@ function pageSettings(){
   '<div class="card"><h3>部署架构</h3><div class="sub">决定机器人能把网页部署成什么形态,改完立刻生效</div>'+
    '<div class="line"><div class="g"><b>静态网页</b><span>纯 HTML/CSS/JS 文件,加上 ./__data 简易存储</span></div>'+sw((ag.architectures||['html']).indexOf('html')>=0,'data-t="archHtml"')+'</div>'+
    '<div class="line"><div class="g"><b>预制后端接口</b><span>页面可以调用「模块」页里勾了「站点后端」的模块</span></div>'+sw((ag.architectures||[]).indexOf('prefab')>=0,'data-t="archPrefab"')+'</div>'+
-   '<div class="line"><div class="g"><b>自定义后端</b><span>页面里放 _backend.js,由沙盒执行,每站带独立数据存储</span></div>'+sw((ag.architectures||[]).indexOf('custom')>=0,'data-t="archCustom"')+'</div>'+
-   '<div class="hint" style="margin-top:12px">开启后,页面里 fetch("/api/…") 会先找同名的预制模块,再找页面所属站点的 _backend.js;有每分钟频率限制。</div>'+
+   '<div class="line"><div class="g"><b>自定义后端</b><span>页面里放 backend/xxx.js 等多个后端文件,由沙盒按路由执行,每站带独立数据存储</span></div>'+sw((ag.architectures||[]).indexOf('custom')>=0,'data-t="archCustom"')+'</div>'+
+   '<div class="hint" style="margin-top:12px">开启后,页面里 fetch("/api/…") 会先找同名的预制模块,再按路由找页面所属站点的多个后端文件;有每分钟频率限制。</div>'+
    '<div class="line"><div class="g"><b>部署前确认</b><span>AI 部署先生成确认链接,管理员点「确认部署」后才真正创建</span></div>'+sw(dep.confirm===true,'data-t="deployConfirm"')+'</div></div>'+
+   '<div class="hint" style="margin:12px 0 8px"><b>外部语言运行时</b>:JS 后端无需配置。Python / Lua / Ruby 后端分别指向你自建的执行器,接收 {language, code, ctx},返回 {ok, value, error}。</div>'+
+   '<div class="fld"><label class="f">Python 执行器 URL</label><input class="t mono" id="rt-py" value="'+h((rts.python&&rts.python.url)||'')+'" placeholder="https://runner.example.com/execute"></div>'+
+   '<div class="fld"><label class="f">Python 执行器 Key(留空不修改)</label><input class="t mono" id="rt-py-key" value="" placeholder="'+((rts.python&&rts.python.apiKey)?'已保存,留空不修改':'可留空')+'"></div>'+
+   '<div class="row"><div><label class="f">Lua 执行器 URL</label><input class="t mono" id="rt-lua" value="'+h((rts.lua&&rts.lua.url)||'')+'"></div>'+
+   '<div><label class="f">Ruby 执行器 URL</label><input class="t mono" id="rt-rb" value="'+h((rts.ruby&&rts.ruby.url)||'')+'"></div></div>'+
+   '<div style="margin-top:12px"><button class="btn" id="rt-save">保存运行时</button></div></div>'+
 
   '<div class="card"><h3>日志</h3><div class="sub">调试模式会记录更详细的过程,占用更多存储</div>'+
    '<div class="line"><div class="g"><b>调试模式</b><span>记录每次请求、工具参数、上游原始返回</span></div>'+sw(lg.debug,'data-t="debug"')+'</div>'+
@@ -1164,6 +1214,8 @@ function stog(sel,path){var n=v.querySelector(sel);
    site:{publicBaseUrl:v.querySelector('#site-base').value.trim()}}})
   .then(function(r){toast(r.note||'已保存');S.settings=null;render()})
   .catch(function(e){toast(e.message)}).then(function(){b.disabled=false;b.textContent='保存'})};
+ function runner(url,key){var o={url:v.querySelector(url).value.trim()};var k=v.querySelector(key).value.trim();if(k)o.apiKey=k;return o}
+ v.querySelector('#rt-save').onclick=function(){save({deploy:{runtimes:{python:runner('#rt-py','#rt-py-key'),lua:{url:v.querySelector('#rt-lua').value.trim()},ruby:{url:v.querySelector('#rt-rb').value.trim()}}}},this)};
  v.querySelector('#site-get').onclick=function(){v.querySelector('#site-base').value=location.origin;toast('已填入当前网址,记得点保存')};
  v.querySelector('#lg-save').onclick=function(){save({logs:{retentionDays:Number(v.querySelector('#lg-days').value)||7,
   maxRows:Number(v.querySelector('#lg-max').value)||8000}},this)};
@@ -1632,7 +1684,8 @@ function pageStorage(){
     '<div><label class="f">Region(可填 auto)</label><input class="t mono" id="sr-rg" value="'+(editing?h(editing.region||''):'')+'" placeholder="auto"></div></div>'+
     '<div class="row" style="margin-top:13px"><div><label class="f">Access Key</label><input class="t mono" id="sr-ak" value="'+(editing?h(editing.accessKey||''):'')+'"></div>'+
     '<div><label class="f">Secret Key'+(editing?'(留空 = 不改)':'')+'</label><input class="t mono" type="password" id="sr-sk" value=""></div></div>'+
-    '<div class="fld" style="margin-top:13px"><label style="font-size:13px"><input type="checkbox" id="sr-ps"'+(editing?(editing.pathStyle!==false?' checked':''):' checked')+'> Path-Style 寻址(大多数 S3 兼容服务需要;AWS 原生可以关)</label></div>'))+
+    '<div class="fld" style="margin-top:13px"><label style="font-size:13px"><input type="checkbox" id="sr-ps"'+(editing?(editing.pathStyle!==false?' checked':''):' checked')+'> Path-Style 寻址(大多数 S3 兼容服务需要;AWS 原生可以关)</label></div>'+
+    '<div class="fld"><label style="font-size:13px"><input type="checkbox" id="sr-compat"'+(editing&&editing.compatTxt?' checked':'')+'> 启用 .txt 兼容模式(限制 HTML/JS 的存储使用;逻辑文件名不变,物理文件按项目隔离编码为 .txt)</label></div>'))+
    '<div class="fld"><label class="f">容量上限(GB)</label><input class="t" type="number" id="sr-max" value="'+(editing?Math.max(1,Math.round((editing.maxBytes||0)/1073741824)):5)+'"></div>'+
    '<button class="btn pri" id="sr-save">'+(editing?'保存修改':'添加存储')+'</button> '+(editing?'<button class="btn" id="sr-cancel">取消编辑</button>':'')+'</div>'+
    '<div class="card" style="border-color:#fecaca"><h3 style="color:#b91c1c">危险操作</h3><div class="sub">重置会清空 D1 里的配置、项目、日志、统计、群组、技能、扩展、模块,清空 KV/R2 文件,并清空机器人的会话上下文。S3 物理文件需要到服务商后台删除。操作不可恢复。</div>'+
@@ -1641,7 +1694,7 @@ function pageStorage(){
   v.querySelectorAll('[data-en]').forEach(function(n){n.onclick=function(){
    var s=byId(n.dataset.en);
    var store={id:s.id,kind:s.kind,name:s.name,priority:s.priority,maxBytes:s.maxBytes,enabled:!n.classList.contains('on')};
-   if(s.kind==='s3'){store.endpoint=s.endpoint;store.bucket=s.bucket;store.region=s.region;store.accessKey=s.accessKey;store.pathStyle=s.pathStyle}
+   if(s.kind==='s3'){store.endpoint=s.endpoint;store.bucket=s.bucket;store.region=s.region;store.accessKey=s.accessKey;store.pathStyle=s.pathStyle;store.compatTxt=s.compatTxt===true}
    api('/storage/save',{method:'POST',body:{store:store}}).then(function(){render()}).catch(function(e){toast(e.message)})}});
   v.querySelectorAll('[data-test]').forEach(function(b){b.onclick=function(){
    var old=b.textContent;b.disabled=true;b.textContent='测试中…';
@@ -1674,6 +1727,7 @@ function pageStorage(){
     store.accessKey=v.querySelector('#sr-ak').value.trim();
     store.secretKey=v.querySelector('#sr-sk').value.trim();
     store.pathStyle=v.querySelector('#sr-ps').checked;
+    store.compatTxt=v.querySelector('#sr-compat').checked===true;
    }
    b.disabled=true;
    api('/storage/save',{method:'POST',body:{store:store}})

@@ -23,7 +23,7 @@ export function buildTools(cfg, extras = {}) {
         + `当前可用模块:${extras.prefabList.map((m) => `${m.id}(${m.name})`).join('、')}。`;
     }
     if (cfg.canCustomBackend) {
-      backendNote += ' 需要自定义后端时,在 files 里加一个 _backend.js:里面直接写语句,可以用 ctx.method / ctx.path / ctx.query / ctx.body / ctx.json() / '
+      backendNote += ' 需要自定义后端时,在 files 里放 backend/<接口路径>.js(也兼容旧的 _backend.js):里面直接写语句,可以用 ctx.method / ctx.path / ctx.query / ctx.body / ctx.json() / '
         + 'ctx.store.get(k) / ctx.store.set(k,v) / ctx.fetch(url) / ctx.log(...),用 return 返回结果(对象会按 JSON 返回,也可以 return {status, contentType, body})。'
         + '页面通过 fetch("/api/任意路径") 调用它。注意这是沙盒 JS:支持 let/const、if/for/while、函数、模板字符串、数组对象等常用语法,不支持 import/class。';
     }

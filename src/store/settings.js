@@ -105,6 +105,12 @@ export function maskSecrets(settings) {
   if (out.llm?.apiKey) out.llm.apiKey = maskValue(out.llm.apiKey);
   if (out.search?.key) out.search.key = maskValue(out.search.key);
   if (out.extract?.key) out.extract.key = maskValue(out.extract.key);
+  for (const m of Object.values(out.models || {})) {
+    if (m && m.apiKey) m.apiKey = maskValue(m.apiKey);
+  }
+  for (const r of Object.values(out.deploy?.runtimes || {})) {
+    if (r && r.apiKey) r.apiKey = maskValue(r.apiKey);
+  }
   if (out.qq?.appSecret) out.qq.appSecret = maskValue(out.qq.appSecret);
   if (Array.isArray(out.storage?.stores)) {
     for (const s of out.storage.stores) {

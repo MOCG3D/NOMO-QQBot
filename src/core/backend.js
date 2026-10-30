@@ -132,3 +132,42 @@ export function moduleResultText(r) {
   if (r.logs.length) parts.push(`模块日志:\n${r.logs.join('\n')}`);
   return parts.join('\n').slice(0, 2600);
 }
+
+/**
+ * 按文件扩展名选择运行时。
+ * JS/TS 走内置 jsmini;Python/Lua/Ruby 走管理员配置的外部执行器。
+ * 外部执行器必须接收 {language, code, ctx} 并返回 {ok, value, error, logs}。
+ */
+export async function execBackendFile({ path, code, ctx, settings = {}, timeoutMs = 5000 }) {
+  const ext = String(path || '').split('.').pop().toLowerCase();
+  const language = ext === 'py' ? 'python' : ext === 'lua' ? 'lua' : ext === 'rb' ? 'ruby' : 'javascript';
+  if (language === 'javascript') return await execBackend(code, ctx, { timeoutMs });
+  const runtimes = settings?.deploy?.runtimes && typeof settings.deploy.runtimes === 'object'
+    ? settings.deploy.runtimes : {};
+  const runner = runtimes[language] && typeof runtimes[language] === 'object' ? runtimes[language] : null;
+  if (!runner?.url) {
+    return { ok: false, error: `${language} 后端需要在「部署设置 → 外部运行时」配置执行器地址`, logs: [] };
+  }
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), Math.max(1000, Math.min(60000, Number(runner.timeoutMs) || timeoutMs)));
+  try {
+    const headers = { 'Content-Type': 'application/json', 'User-Agent': 'NOMO-QQBot/4.0' };
+    if (runner.apiKey) headers.Authorization = `Bearer ${runner.apiKey}`;
+    const res = await fetch(String(runner.url), {
+      method: 'POST', headers, signal: ctrl.signal,
+      body: JSON.stringify({ language, code, ctx, timeoutMs }),
+    });
+    if (!res.ok) return { ok: false, error: `外部运行时 HTTP ${res.status}`, logs: [] };
+    const j = await res.json().catch(() => ({}));
+    return {
+      ok: j.ok !== false,
+      value: j.value ?? j.result,
+      error: String(j.error || ''),
+      logs: Array.isArray(j.logs) ? j.logs.slice(0, 100).map(String) : [],
+    };
+  } catch (e) {
+    return { ok: false, error: `外部运行时调用失败:${e?.message || e}`, logs: [] };
+  } finally {
+    clearTimeout(timer);
+  }
+}

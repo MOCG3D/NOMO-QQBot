@@ -90,7 +90,7 @@ for (const p of PROTOCOLS) {
 }
 eq('WAV content-type', audioContentType('wav'), 'audio/wav');
 eq('mp3 content-type', audioContentType('mp3'), 'audio/mpeg');
-eq('未知音频回落 mpeg', audioContentType('flac'), 'audio/mpeg');
+eq('flac 使用真实 MIME', audioContentType('flac'), 'audio/flac');
 
 // ---------- 创造模式解析 ----------
 eq('创造模式能解析', parseCreativeMode('AI 创造模式 写一个贪吃蛇'), '写一个贪吃蛇');

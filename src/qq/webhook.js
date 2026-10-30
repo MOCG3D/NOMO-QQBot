@@ -124,7 +124,11 @@ export function normaliseEvent(payload) {
   if (t === 'INTERACTION_CREATE') {
     const r = d.data?.resolved || {};
     const groupOpenid = d.group_openid || r.group_openid || d.data?.group_openid || '';
-    const userOpenid = r.user_id || d.user_openid || '';
+    const userOpenid = r.user_id || r.user_openid || r.member_openid
+      || d.user_openid || d.member_openid || d.author?.member_openid || d.author?.user_openid || '';
+    // 官方按钮事件通常不带角色;有就收下,没有则由 DO 读群消息时缓存的角色
+    const memberRole = String(d.member_role || d.author?.member_role || d.member?.role
+      || r.member_role || d.group_member?.role || '');
     return {
       ...base,
       kind: 'interaction',
@@ -134,6 +138,7 @@ export function normaliseEvent(payload) {
       targetId: groupOpenid || userOpenid,
       convId: groupOpenid ? `g:${groupOpenid}` : `u:${userOpenid}`,
       userId: userOpenid,
+      memberRole,
       groupOpenid,
       buttonData: String(r.button_data || ''),
       buttonId: String(r.button_id || ''),

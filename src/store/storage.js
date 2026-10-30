@@ -43,6 +43,9 @@ export function resolveStores(settings, env) {
       priority: Number.isFinite(Number(saved.priority)) ? Number(saved.priority) : auto.priority,
       maxBytes: Number(saved.maxBytes) > 0 ? Number(saved.maxBytes) : auto.maxBytes,
       name: saved.name || auto.name,
+      // 自动绑定的 R2/KV 也要保留兼容模式等自定义字段
+      compatTxt: saved.compatTxt === true || saved.compatMode === 'txt',
+      compatMode: saved.compatTxt === true || saved.compatMode === 'txt' ? 'txt' : '',
     });
   }
   for (const s of cfgStores) {
@@ -242,19 +245,20 @@ async function pickWriteStore(env, settings, size) {
   return null;
 }
 
-export async function putObject(env, key, bytes, { contentType = '' } = {}) {
+export async function putObject(env, key, bytes, { contentType = '', mapKey = null } = {}) {
   const settings = await getRaw(env);
   const size = bytes.byteLength ?? bytes.length ?? 0;
   const chosen = await pickWriteStore(env, settings, size);
   if (!chosen) throw new Error('没有可用的存储空间(检查 KV/R2 绑定,或各存储桶的容量上限)');
   const ad = getAdapter(env, chosen);
-  await ad.put(key, bytes, contentType);
+  await ad.put(mapKey ? mapKey(chosen, key) : key, bytes, contentType);
   await addUsage(env, chosen.id, size, 1);
   const mirrors = [];
   const cacheKV = settings.storage?.cacheKV !== false;
   if (cacheKV && chosen.kind !== 'kv' && env?.STORE) {
     try {
-      await kvAdapter(env).put(key, bytes, contentType);
+      const mirrorStore = { id: 'kv', kind: 'kv' };
+      await kvAdapter(env).put(mapKey ? mapKey(mirrorStore, key) : key, bytes, contentType);
       await addUsage(env, 'kv', size, 1);
       mirrors.push('kv');
     } catch {
@@ -264,13 +268,13 @@ export async function putObject(env, key, bytes, { contentType = '' } = {}) {
   return { storeId: chosen.id, size, mirrors };
 }
 
-export async function getObject(env, key) {
+export async function getObject(env, key, { mapKey = null } = {}) {
   const settings = await getRaw(env);
   const stores = resolveStores(settings, env);
   for (const s of stores) {
     if (!s.enabled || !availability(env, s).ok) continue;
     try {
-      const bytes = await getAdapter(env, s).get(key);
+      const bytes = await getAdapter(env, s).get(mapKey ? mapKey(s, key) : key);
       if (bytes) return { bytes, storeId: s.id };
     } catch {
       /* 读不到就试下一个 */
@@ -299,7 +303,7 @@ export async function deleteObject(env, key) {
   return removed;
 }
 
-export async function deletePrefix(env, prefix) {
+export async function deletePrefix(env, prefix, { mapPrefix = null } = {}) {
   const settings = await getRaw(env);
   const stores = resolveStores(settings, env);
   let total = 0;
@@ -311,7 +315,8 @@ export async function deletePrefix(env, prefix) {
       let sum = 0;
       let count = 0;
       for (let i = 0; i < 30; i++) {
-        const page = await ad.list({ prefix, cursor, limit: 1000 });
+        const actualPrefix = mapPrefix ? mapPrefix(s, prefix) : prefix;
+        const page = await ad.list({ prefix: actualPrefix, cursor, limit: 1000 });
         for (const k of page.keys) {
           await ad.delete(k.name);
           sum += Number(k.size || 0);

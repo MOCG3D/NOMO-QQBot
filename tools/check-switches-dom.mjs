@@ -151,6 +151,36 @@ await go('设置', 500);
   }
 }
 
+// 4) 模型页:站内下拉 + 内置示例一键测试(不要求手填 URL)
+await go('模型', 500);
+{
+  const choices = D.querySelectorAll('[data-choice]');
+  if (choices.length !== 5) failures.push(`模型页应有 5 个站内协议下拉,实际 ${choices.length}`);
+  const nativeProto = D.querySelector('select[id$="-proto"]');
+  if (nativeProto) failures.push('模型协议仍在使用浏览器原生 select');
+  const first = choices[0];
+  first.querySelector('[data-choice-open]').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  if (!first.querySelector('.choice-menu').classList.contains('show')) failures.push('协议下拉点击后没有展开');
+  const testBtn = D.querySelector('[data-mtest="ocr"]');
+  if (!testBtn) failures.push('OCR 测试按钮不存在');
+  else {
+    testBtn.dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+    await wait(60);
+    const sample = D.querySelector('[data-sample="ocr-zh"]');
+    if (!sample) failures.push('OCR 内置中文样例按钮没有渲染');
+    else {
+      const before = POSTS.length;
+      sample.dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+      await wait(120);
+      const sent = POSTS.slice(before);
+      if (!sent.some((b) => b.includes('"sample":"ocr-zh"'))) {
+        failures.push('点击内置样例没有直接发起 OCR 测试(实际:' + (sent.join('|') || '无') + ')');
+      }
+    }
+    D.querySelector('.modal [data-x]')?.dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  }
+}
+
 // 4) 扩展工具开关(异步填充,在 Agent 页)
 await go('Agent 配置', 600);
 {

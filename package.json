@@ -1,6 +1,6 @@
 {
   "name": "nomo-qqbot",
-  "version": "4.2.0",
+  "version": "4.3.0",
   "private": true,
   "description": "NOMO-QQBot:QQ 官方机器人 + AI Agent + 在线部署,运行在 Cloudflare Workers 上,自带管理面板",
   "type": "module",
@@ -19,8 +19,9 @@
     "test:integration": "node test/integration.js",
     "check:switches": "node tools/check-switches.js",
     "check:switches:dom": "node tools/check-switches-dom.mjs",
-    "test:all": "node tools/audit.js && node tools/check-switches.js && node tools/check-switches-dom.mjs && node tools/scan-secrets.js && node test/run.js && node test/models.test.mjs && node test/jsmini.test.mjs && node test/integration.js",
-    "test:models": "node test/models.test.mjs"
+    "test:all": "node tools/audit.js && node tools/check-switches.js && node tools/check-switches-dom.mjs && node tools/scan-secrets.js && node test/run.js && node test/models.test.mjs && node test/stability.test.mjs && node test/jsmini.test.mjs && node test/integration.js",
+    "test:models": "node test/models.test.mjs",
+    "test:stability": "node test/stability.test.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.20.0"

@@ -9,6 +9,7 @@ import { loadExts, enabledToolSet, externalToolDefs, runExternalTool, scriptDefs
 import { buildRegistry, runScriptTool } from './registry.js';
 import { execBackend, sandboxFetch } from '../core/backend.js';
 import { listModules, agentModules, siteModules } from '../store/modules.js';
+import { withRetry } from './models.js';
 
 export async function runAgent({ cfg, core, convId, userText, images = [], meta = {}, log = console.log }) {
   const started = Date.now();
@@ -126,15 +127,34 @@ export async function runAgent({ cfg, core, convId, userText, images = [], meta 
   let usageTotal = 0;
   let downgraded = false;
   let lastError = '';
+  let consecutiveFailures = 0;
 
-  for (let round = 0; round < cfg.agentMaxRounds; round++) {
+  // 模型与只读工具的瞬时错误都在后台重试,不把一次 502/超时直接抛给用户。
+  // 有副作用的工具(部署/写文件/删除)绝不自动重放,避免重复建项目。
+  const callModel = async (msgs, defs) => withRetry(async () => {
+    const r = await chatWithFallback(creativeCfg, msgs, defs, { timeoutMs: perCallTimeoutMs });
+    if (r.aborted && r.error) throw new Error(r.error);
+    return r;
+  }, {
+    attempts: 2,
+    onRetry: (_n, e) => log(`[agent] 上游瞬时失败,后台重试:${String(e?.message || e).slice(0, 120)}`, 'info'),
+  });
+  const readOnlyTools = new Set(['web_search', 'fetch_url', 'query_dashboard', 'motd', 'group_recent', 'group_find', 'list_sites', 'read_site', 'now', 'calc', 'encode', 'random', 'recall']);
+
+  for (let round = 0; round < creativeCfg.agentMaxRounds; round++) {
     if (totalBudgetMs > 0 && Date.now() - started > totalBudgetMs) {
       log('[agent] 超出总时间预算,提前收尾');
       break;
     }
     rounds++;
 
-    const resp = await chatWithFallback(cfg, messages, tools, { timeoutMs: perCallTimeoutMs });
+    let resp;
+    try {
+      resp = await callModel(messages, tools);
+    } catch (e) {
+      resp = { content: '', reasoningHead: '', reasoningLen: 0, toolCalls: [], finishReason: null,
+        usage: null, elapsedMs: 0, aborted: false, error: String(e?.message || e) };
+    }
 
     if (resp.downgradedFrom) downgraded = true;
     if (resp.error) lastError = resp.error;
@@ -147,11 +167,23 @@ export async function runAgent({ cfg, core, convId, userText, images = [], meta 
       log(`[思考·摘录] ${resp.reasoningHead.replace(/\s+/g, ' ').slice(0, 800)}`);
     }
 
-    const calls = resp.toolCalls.slice(0, cfg.agentMaxToolsPerRound);
+    const calls = resp.toolCalls.slice(0, creativeCfg.agentMaxToolsPerRound);
     if (calls.length === 0) {
+      if (String(resp.content || '').trim()) {
+        final = resp.content;
+        break;
+      }
+      // 工具已经做过事但模型只吐了空白:不能就此中断项目,补一句继续指令再跑。
+      consecutiveFailures++;
+      lastError = resp.error || lastError;
+      if (consecutiveFailures <= 2 && round + 1 < creativeCfg.agentMaxRounds) {
+        messages.push({ role: 'user', content: '刚才没有收到正文。请根据已完成的工具结果继续,必须给出简体中文正文;项目未完成的继续调用工具。' });
+        continue;
+      }
       final = resp.content;
       break;
     }
+    consecutiveFailures = 0;
 
     messages.push({
       role: 'assistant',
@@ -177,7 +209,9 @@ export async function runAgent({ cfg, core, convId, userText, images = [], meta 
       if (m) result = await callMcp(core.env, m.serverId, m.tool, args);
       else if (em) result = await runExternalTool(em, args, (msg) => log(`[扩展] ${msg}`));
       else if (sm) result = await runScriptTool(sm, args, ctx);
-      else result = await executeTool(name, args, ctx);
+      else if (readOnlyTools.has(name)) {
+        result = await withRetry(() => executeTool(name, args, ctx), { attempts: 2 });
+      } else result = await executeTool(name, args, ctx);
       return { name, args, result: String(result) };
     }));
 
@@ -199,13 +233,30 @@ export async function runAgent({ cfg, core, convId, userText, images = [], meta 
       });
     }
 
-    if (round === cfg.agentMaxRounds - 1) {
+    if (round === creativeCfg.agentMaxRounds - 1) {
       messages.push({
         role: 'user',
         content: '现在请直接用简体中文给出最终回复,不要再调用任何工具。',
       });
-      const last = await chatWithFallback(cfg, messages, null, { timeoutMs: perCallTimeoutMs });
+      const last = await callModel(messages, null);
       if (last.content.trim()) final = last.content;
+    }
+  }
+
+  // 达到轮次上限后仍必须有一次明确收尾;优先让模型基于工具结果总结,
+  // 模型仍空白则用确定性正文兜底,绝不只留一张「正在运行」回执。
+  if (!final.trim() && toolTrace.length) {
+    const digest = toolTrace.slice(-8).map((t) => `· ${t.name}: ${String(t.result).slice(0, 500)}`).join('\n');
+    for (let i = 0; i < 2 && !final.trim(); i++) {
+      try {
+        const last = await callModel([
+          { role: 'system', content: '你是项目收尾助手。只能依据工具结果回答,不要调用工具,不要声称未做的事已完成。' },
+          { role: 'user', content: `用户原始需求:${userText}\n已执行工具:${digest}\n请用简体中文给出最终正文,说明完成了什么、链接或错误是什么、下一步是什么。` },
+        ], null);
+        final = last.content || '';
+      } catch (e) {
+        lastError = String(e?.message || e);
+      }
     }
   }
 
