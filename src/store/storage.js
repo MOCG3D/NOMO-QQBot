@@ -251,7 +251,12 @@ export async function putObject(env, key, bytes, { contentType = '', mapKey = nu
   const chosen = await pickWriteStore(env, settings, size);
   if (!chosen) throw new Error('没有可用的存储空间(检查 KV/R2 绑定,或各存储桶的容量上限)');
   const ad = getAdapter(env, chosen);
-  await ad.put(mapKey ? mapKey(chosen, key) : key, bytes, contentType);
+  const physicalType = (chosen.compatTxt === true || chosen.compatMode === 'txt')
+    ? 'text/plain; charset=utf-8'
+    : contentType;
+  // 兼容模式不仅 key 以 .txt 结尾,MIME 也必须是 text/plain;
+  // 有些免费存储商会同时按扩展名和 Content-Type 拒绝 HTML/JS。
+  await ad.put(mapKey ? mapKey(chosen, key) : key, bytes, physicalType);
   await addUsage(env, chosen.id, size, 1);
   const mirrors = [];
   const cacheKV = settings.storage?.cacheKV !== false;

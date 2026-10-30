@@ -5,6 +5,7 @@ import { bump, bumpDaily } from './store/stats.js';
 import { getModule } from './store/modules.js';
 import { execBackend, execBackendFile, sandboxFetch, normalizeBackendResult } from './core/backend.js';
 import { isBackendPath, backendCandidates } from './core/site-files.js';
+import { rewriteProjectReferences } from './core/references.js';
 import { logWrite } from './store/logs.js';
 import { isSiteId } from './util/id.js';
 
@@ -142,6 +143,15 @@ export async function serveSite(env, cfg, request, url, ctx) {
 
   if (!rest || /\.html?$/i.test(filePath)) noteView(env, ctx, id);
 
+  // 老项目也修复引用:部署时写入的版本与这里的读取兜底是幂等的,
+  // 不会重复添加 base 或重复拼接项目 ID。
+  let servedBytes = bytes;
+  if (/\.(html?|css|js|mjs)$/i.test(filePath)) {
+    const text = new TextDecoder().decode(bytes);
+    const rewritten = rewriteProjectReferences([{ path: filePath, content: text }], id);
+    servedBytes = new TextEncoder().encode(rewritten[0].content);
+  }
+
   const ct = mimeFor(filePath);
   const headers = {
     'Content-Type': ct,
@@ -154,7 +164,7 @@ export async function serveSite(env, cfg, request, url, ctx) {
     headers['X-Frame-Options'] = 'SAMEORIGIN';
   }
   if (request.method === 'HEAD') return new Response(null, { headers });
-  return new Response(bytes, { headers });
+  return new Response(servedBytes, { headers });
 }
 
 function json(obj, status = 200) {

@@ -1309,7 +1309,8 @@ await t('中文 ID + 压缩存储:编码 URL 直读还原', async () => {
   const res = await worker.fetch(new Request(`https://panel.example.com/${encodeURIComponent('云星智创')}`), env, ctx);
   assert(res.status === 200, `实际 ${res.status}`);
   const text = await res.text();
-  assert(text === big, '直读解压后应与原文完全一致');
+  assert(text.includes(big), '直读解压后应保留原文全部内容');
+  assert(text.includes(`<base href="/${encodeURIComponent('云星智创')}/">`) || text.includes('<base href="/云星智创/">'), '应注入项目内资源 base');
 });
 await t('保存站点域名后,面板与工具链接都用它', async () => {
   const r = await api('/settings', { method: 'POST', body: { site: { publicBaseUrl: 'https://ai.example.com' } } });

@@ -17,6 +17,7 @@ import { imageToDataUrl, attachmentKind, describeAttachments } from '../qq/media
 import { wsStart, wsClose, wsEnsure, wsStatus } from '../qq/gateway.js';
 import { isReservedPath, genSiteId } from '../util/id.js';
 import { isMasked } from '../util/secret.js';
+import { rewriteProjectReferences } from './references.js';
 
 const JOB_MAX_PER_ALARM = 25;
 const ALARM_DEADLINE_MS = 12 * 60 * 1000;
@@ -1017,13 +1018,14 @@ Object.assign(BotCore.prototype, {
       description: String(description || ''),
       url,
     });
+    const linked = rewriteProjectReferences(enhanced, id);
     const r = await P.createProject(this.env, settings, {
       id,
       name: String(name || '未命名项目').slice(0, 60),
       description: String(description || '').slice(0, 200),
       owner: String(owner || ''),
       source: 'ai',
-      files: enhanced.map((f) => ({ path: f.path, content: f.content, ct: mimeFor(f.path) })),
+      files: linked.map((f) => ({ path: f.path, content: f.content, ct: mimeFor(f.path) })),
       ttlSeconds: cfg.siteTtlSeconds,
     });
     if (r.error) return { error: r.error };
@@ -1042,7 +1044,8 @@ Object.assign(BotCore.prototype, {
         description: String(p.description || ''),
         url: this.siteUrl(cfg, id),
       });
-      const r = await P.writeFiles(this.env, id, enhanced.map((f) => ({ path: f.path, content: f.content, ct: mimeFor(f.path) })), lim.limit);
+      const linked = rewriteProjectReferences(enhanced, id);
+      const r = await P.writeFiles(this.env, id, linked.map((f) => ({ path: f.path, content: f.content, ct: mimeFor(f.path) })), lim.limit);
       if (r.error) return { error: r.error };
     }
     await P.recalc(this.env, id);

@@ -60,7 +60,7 @@ export function runtimeOf(path) {
   return 'javascript';
 }
 
-function base64UrlText(text) {
+function legacyBase64UrlText(text) {
   const bytes = new TextEncoder().encode(String(text));
   let s = '';
   for (let i = 0; i < bytes.length; i += 0x8000) {
@@ -78,7 +78,10 @@ export function projectObjectKey(siteId, store, path) {
   const logical = cleanProjectPath(path);
   if (store?.compatTxt === true || store?.compatMode === 'txt') {
     const safeSid = sid.replace(/[^a-zA-Z0-9_-]/g, '_');
-  return `projects/${safeSid}/${base64UrlText(logical)}.txt`;
+    // 保留原始目录和文件名,只在最后追加 .txt:index.html -> index.html.txt
+    // 这样既满足对象存储的扩展名限制,也避免 a.html 与 a.js 都变成 a.txt 而冲突。
+    const physical = logical.split('/').map((x) => encodeURIComponent(x)).join('/');
+    return `projects/${safeSid}/${physical}.txt`;
   }
   return `f/${sid}/${logical}`;
 }
@@ -91,7 +94,9 @@ export function projectPrefix(siteId, store) {
 /** 读取时同时尝试当前与另一种模式,切换兼容开关不会让旧项目失联。 */
 export function projectObjectKeys(siteId, store, path) {
   const other = { ...store, compatTxt: !(store?.compatTxt === true || store?.compatMode === 'txt'), compatMode: '' };
-  return [...new Set([projectObjectKey(siteId, store, path), projectObjectKey(siteId, other, path)])];
+  const sid = String(siteId).replace(/[^a-zA-Z0-9_-]/g, '_');
+  const legacy = `projects/${sid}/${legacyBase64UrlText(cleanProjectPath(path))}.txt`;
+  return [...new Set([projectObjectKey(siteId, store, path), projectObjectKey(siteId, other, path), legacy])];
 }
 
 export function projectPrefixes(siteId, store) {

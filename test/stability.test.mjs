@@ -11,6 +11,7 @@ import { handleSiteApi, serveSite } from '../src/serve.js';
 import { backendCandidates, isBackendPath } from '../src/core/site-files.js';
 import { execBackendFile } from '../src/core/backend.js';
 import { sampleInput } from '../src/agent/fixtures.js';
+import { rewriteProjectReferences } from '../src/core/references.js';
 
 let pass = 0;
 const failures = [];
@@ -165,7 +166,7 @@ await test('多后端文件按路由执行,源码不公开,旧版仍可兜底', 
 await test('S3 .txt 兼容模式按项目隔离,逻辑文件照常读取和删除', async () => {
   const objects = new Map();
   const R2 = {
-    async put(k, v) { objects.set(k, new Uint8Array(v)); },
+    async put(k, v, opts) { objects.set(k, new Uint8Array(v)); this.lastType = opts?.httpMetadata?.contentType || ''; },
     async get(k) { return objects.has(k) ? { arrayBuffer: async () => objects.get(k).buffer.slice(0) } : null; },
     async head(k) { return objects.has(k) ? { size: objects.get(k).length } : null; },
     async delete(k) { objects.delete(k); },
@@ -185,7 +186,8 @@ await test('S3 .txt 兼容模式按项目隔离,逻辑文件照常读取和删�
   const keys = [...objects.keys()];
   assert.equal(keys.length, 1);
   assert.match(keys[0], /^projects\/compat01\/.+\.txt$/);
-  assert.equal(keys[0].includes('index.html'), false);
+  assert.equal(keys[0].endsWith('/index.html.txt'), true);
+  assert.match(R2.lastType, /^text\/plain/);
   const bytes = await getFileAuto(env, 'compat01', 'index.html');
   assert.equal(new TextDecoder().decode(bytes), '<h1>仍然运行</h1>');
   // 切换回普通模式后,旧 .txt 对象仍必须能读、能随项目删除
@@ -194,6 +196,58 @@ await test('S3 .txt 兼容模式按项目隔离,逻辑文件照常读取和删�
   assert.equal(new TextDecoder().decode(afterToggle), '<h1>仍然运行</h1>');
   await removeProject(env, 'compat01');
   assert.equal(objects.size, 0);
+});
+
+await test('AI 根绝对资源引用会改写到项目内,API 路径保持不变', async () => {
+  const files = rewriteProjectReferences([
+    { path: 'index.html', content: '<html><head></head><body><link href="/style.css"><script src="/app.js"></script><script>fetch("/data.json");fetch("/api/hello")</script></body></html>' },
+    { path: 'style.css', content: 'body{background:url("/assets/bg.png")}' },
+    { path: 'backend/hello.js', content: 'return fetch("/api/hello");' },
+  ], 'site1234');
+  assert.match(files[0].content, /<base href="\/site1234\/">/);
+  assert.match(files[0].content, /href="\/site1234\/style.css"/);
+  assert.match(files[0].content, /src="\/site1234\/app.js"/);
+  assert.match(files[0].content, /fetch\("\/site1234\/data.json"\)/);
+  assert.match(files[0].content, /fetch\("\/api\/hello"\)/);
+  assert.match(files[1].content, /url\("\/site1234\/assets\/bg.png"\)/);
+  assert.equal(files[2].content, 'return fetch("/api/hello");');
+});
+
+await test('旧项目未重写过的 HTML 在读取时也能加载项目内资源', async () => {
+  const env = makeEnv();
+  const settings = deepMerge(DEFAULT_SETTINGS, { deploy: { confirm: false } });
+  await createProject(env, settings, {
+    id: 'oldsite1', name: '旧项目',
+    files: [{ path: 'index.html', content: '<html><head></head><body><script src="/old-app.js"></script></body></html>' }],
+  });
+  const cfg = flatten(settings, env);
+  const res = await serveSite(env, cfg, new Request('https://x/oldsite1'), new URL('https://x/oldsite1'), { waitUntil() {} });
+  const html = await res.text();
+  assert.match(html, /<base href="\/oldsite1\/">/);
+  assert.match(html, /src="\/oldsite1\/old-app.js"/);
+});
+
+await test('真实 S3 适配器上传 key 与 MIME 都是 .txt 兼容形态', async () => {
+  const env = makeEnv();
+  const settings = deepMerge(DEFAULT_SETTINGS, {
+    storage: { cacheKV: false, stores: [{ id: 's3x', kind: 's3', endpoint: 'https://s3.example.com', bucket: 'bucket', region: 'auto', accessKey: 'a', secretKey: 'b', compatTxt: true, enabled: true, priority: 100, maxBytes: 1024 ** 3 }] },
+    deploy: { confirm: false },
+  });
+  await savePatch(env, settings);
+  const uploads = [];
+  globalThis.fetch = async (url, init) => {
+    uploads.push({ url: String(url), init });
+    if (init.method === 'GET') return new Response('console.log(1)', { status: 200 });
+    return new Response(new Uint8Array(0), { status: 200, headers: { 'Content-Type': 'application/xml' } });
+  };
+  const { createProject: create } = await import('../src/store/projects.js');
+  const r = await create(env, settings, { id: 's3compat', name: 'S3', files: [{ path: 'app.js', content: 'console.log(1)' }] });
+  assert.equal(r.error, undefined);
+  assert.equal(uploads.length, 1);
+  assert.match(uploads[0].url, /app\.js\.txt$/);
+  assert.match(uploads[0].init.headers['content-type'], /^text\/plain/);
+  const readBack = await getFileAuto(env, 's3compat', 'app.js');
+  assert.equal(new TextDecoder().decode(readBack), 'console.log(1)');
 });
 
 await test('审批支持机器人管理员与缓存的群主身份,确认和取消都可用', async () => {
