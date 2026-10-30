@@ -219,7 +219,8 @@ https://<你的地址>/administrator
 
 ```bash
 npm install
-printf 'ADMIN_USER=admin\nADMIN_PASS=本地密码\n' > .dev.vars
+# 以下仅为本地占位示例,不是任何线上账号或真实密码
+printf 'ADMIN_USER=example-only-admin\nADMIN_PASS=example-only-not-a-real-password\n' > .dev.vars
 npm run dev
 ```
 

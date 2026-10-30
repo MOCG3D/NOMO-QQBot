@@ -86,3 +86,5 @@
 - [x] v4.3.2:实测 OCR/两款 ASR/三款 MiMo TTS/CogView 全部通过;MiMo chat/audio 与 CogView size/file_url 协议固化
 
 - [x] v4.4.0:TTS 预置/自然语言设计/音色复刻三模式;可搜索模型弹窗(模态+CDN图标+缓存);V2 局部/全屏加载与渐入动画
+
+- [x] v4.4.1:Wrangler 升至 4.156.0,间接依赖 undici 修复至 7.30.1,npm audit 0 漏洞;占位示例明确为非真实账号

@@ -28,7 +28,7 @@
 ### 部署之后变量好像「自己丢了」,面板又锁上了
 
 **原因**:旧版 `wrangler.toml` 里有 `[vars]` 的两个空值
-`ADMIN_USER = ""` / `ADMIN_PASS = ""`。`wrangler deploy` 默认会用配置文件里的变量
+空的 `ADMIN_USER` / `ADMIN_PASS` 变量(不是真实账号)。`wrangler deploy` 默认会用配置文件里的变量
 覆盖后台,所以每次部署都可能把后台变量冲掉或删掉。
 
 **解决**:先看 Cloudflare 后台有没有这两个变量:

@@ -24,7 +24,7 @@ export const FIXED = {
   skillMaxInject: 6000,
   moduleMaxCode: 20000,
   siteApiPerMinute: 60,
-  appVersion: '4.4.0',
+  appVersion: '4.4.1',
   updateRepo: 'MN-LKs/NOMO-QQBot',
 };
 
