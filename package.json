@@ -24,7 +24,7 @@
     "test:stability": "node test/stability.test.mjs"
   },
   "devDependencies": {
-    "wrangler": "^4.20.0"
+    "wrangler": "^4.156.0"
   },
   "engines": {
     "node": ">=18"
