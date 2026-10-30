@@ -115,6 +115,7 @@ export const DEFAULT_SETTINGS = {
     confirm: false,
     waitSeconds: 30,
     apiPerMinute: 60,
+    maxFiles: 40,
     // Python/Lua/Ruby 等后端文件的外部执行器;JS 始终走内置沙盒
     runtimes: {},
   },
@@ -353,6 +354,7 @@ export function flatten(settings, env = {}) {
     deployConfirm: dep.confirm === true,
     deployWaitSeconds: Math.max(10, Math.min(100, Number(dep.waitSeconds) || 30)),
     apiPerMinute: Math.max(10, Math.min(600, Number(dep.apiPerMinute) || FIXED.siteApiPerMinute)),
+    maxProjectFiles: Math.max(4, Math.min(80, Number(dep.maxFiles) || 40)),
     settings,
   };
 }

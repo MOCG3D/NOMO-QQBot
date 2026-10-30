@@ -616,7 +616,8 @@ export function normaliseFiles(files, cfg) {
   if (!Array.isArray(files) || files.length === 0) {
     throw new Error('files 不能为空,至少要有一个 index.html');
   }
-  if (files.length > 12) throw new Error('一个站点最多 12 个文件');
+  const maxFiles = Math.max(4, Math.min(80, Number(cfg.maxProjectFiles) || 40));
+  if (files.length > maxFiles) throw new Error(`一个站点最多 ${maxFiles} 个文件`);
   const out = [];
   let total = 0;
   for (const f of files) {

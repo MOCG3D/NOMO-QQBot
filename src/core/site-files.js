@@ -87,3 +87,14 @@ export function projectPrefix(siteId, store) {
   const sid = String(siteId);
   return (store?.compatTxt === true || store?.compatMode === 'txt') ? `projects/${sid.replace(/[^a-zA-Z0-9_-]/g, '_')}/` : `f/${sid}/`;
 }
+
+/** 读取时同时尝试当前与另一种模式,切换兼容开关不会让旧项目失联。 */
+export function projectObjectKeys(siteId, store, path) {
+  const other = { ...store, compatTxt: !(store?.compatTxt === true || store?.compatMode === 'txt'), compatMode: '' };
+  return [...new Set([projectObjectKey(siteId, store, path), projectObjectKey(siteId, other, path)])];
+}
+
+export function projectPrefixes(siteId, store) {
+  const other = { ...store, compatTxt: !(store?.compatTxt === true || store?.compatMode === 'txt'), compatMode: '' };
+  return [...new Set([projectPrefix(siteId, store), projectPrefix(siteId, other)])];
+}

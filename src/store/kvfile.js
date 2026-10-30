@@ -2,7 +2,7 @@
 // 这里只负责:路径规范、文本压缩(gzip)、读时按需解压。
 
 import { putObject, getObject, deleteObject, deletePrefix } from './storage.js';
-import { projectObjectKey, projectPrefix } from '../core/site-files.js';
+import { projectObjectKey, projectObjectKeys, projectPrefixes } from '../core/site-files.js';
 
 const MIME = {
   html: 'text/html; charset=utf-8',
@@ -90,7 +90,7 @@ export async function putFile(env, siteId, path, content, ct) {
 
 export async function getFile(env, siteId, path, gz) {
   const r = await getObject(env, keyFor(siteId, path), {
-    mapKey: (store, key) => projectObjectKey(siteId, store, key.replace(keyFor(siteId, ''), '')),
+    mapKey: (store, key) => projectObjectKeys(siteId, store, key.replace(keyFor(siteId, ''), '')),
   });
   if (!r) return null;
   const bytes = r.bytes;
@@ -110,7 +110,7 @@ export async function getFile(env, siteId, path, gz) {
  */
 export async function getFileAuto(env, siteId, path) {
   const r = await getObject(env, keyFor(siteId, path), {
-    mapKey: (store, key) => projectObjectKey(siteId, store, key.replace(keyFor(siteId, ''), '')),
+    mapKey: (store, key) => projectObjectKeys(siteId, store, key.replace(keyFor(siteId, ''), '')),
   });
   if (!r) return null;
   const bytes = r.bytes;
@@ -126,6 +126,6 @@ export async function getFileAuto(env, siteId, path) {
 
 export async function delAll(env, siteId) {
   return await deletePrefix(env, `f/${siteId}/`, {
-    mapPrefix: (store) => projectPrefix(siteId, store),
+    mapPrefix: (store) => projectPrefixes(siteId, store),
   });
 }

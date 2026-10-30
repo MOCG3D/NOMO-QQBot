@@ -240,6 +240,12 @@ export async function handleSiteApi(env, cfg, request, url) {
               },
               fetch: (u, init) => sandboxFetch(u, init, 15000),
               now: () => Date.now(),
+              // 外部运行时也拿得到项目身份与公开数据接口,不需要传平台密钥
+              site: {
+                id: siteId,
+                publicBaseUrl: cfg.publicBaseUrl || '',
+                dataPath: `/${siteId}/__data/`,
+              },
             },
             timeoutMs: 5000,
           });

@@ -188,6 +188,10 @@ await test('S3 .txt 兼容模式按项目隔离,逻辑文件照常读取和删�
   assert.equal(keys[0].includes('index.html'), false);
   const bytes = await getFileAuto(env, 'compat01', 'index.html');
   assert.equal(new TextDecoder().decode(bytes), '<h1>仍然运行</h1>');
+  // 切换回普通模式后,旧 .txt 对象仍必须能读、能随项目删除
+  await savePatch(env, { storage: { cacheKV: false, stores: [{ id: 'r2', kind: 'r2', compatTxt: false, enabled: true, priority: 100, maxBytes: 1024 ** 3 }] } });
+  const afterToggle = await getFileAuto(env, 'compat01', 'index.html');
+  assert.equal(new TextDecoder().decode(afterToggle), '<h1>仍然运行</h1>');
   await removeProject(env, 'compat01');
   assert.equal(objects.size, 0);
 });

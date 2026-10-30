@@ -274,8 +274,11 @@ export async function getObject(env, key, { mapKey = null } = {}) {
   for (const s of stores) {
     if (!s.enabled || !availability(env, s).ok) continue;
     try {
-      const bytes = await getAdapter(env, s).get(mapKey ? mapKey(s, key) : key);
-      if (bytes) return { bytes, storeId: s.id };
+      const candidates = mapKey ? mapKey(s, key) : key;
+      for (const candidate of Array.isArray(candidates) ? candidates : [candidates]) {
+        const bytes = await getAdapter(env, s).get(candidate);
+        if (bytes) return { bytes, storeId: s.id };
+      }
     } catch {
       /* 读不到就试下一个 */
     }
@@ -314,15 +317,30 @@ export async function deletePrefix(env, prefix, { mapPrefix = null } = {}) {
       let cursor = undefined;
       let sum = 0;
       let count = 0;
+      let prefixIndex = 0;
+      const deleted = new Set();
       for (let i = 0; i < 30; i++) {
-        const actualPrefix = mapPrefix ? mapPrefix(s, prefix) : prefix;
+        const mapped = mapPrefix ? mapPrefix(s, prefix) : prefix;
+        const prefixes = Array.isArray(mapped) ? mapped : [mapped];
+        const actualPrefix = prefixes[Math.min(prefixIndex, prefixes.length - 1)];
         const page = await ad.list({ prefix: actualPrefix, cursor, limit: 1000 });
         for (const k of page.keys) {
+          if (deleted.has(k.name)) continue;
+          deleted.add(k.name);
           await ad.delete(k.name);
           sum += Number(k.size || 0);
           count++;
         }
-        if (page.complete || !page.cursor) break;
+        if (page.complete || !page.cursor) {
+          const mapped = mapPrefix ? mapPrefix(s, prefix) : prefix;
+          const totalPrefixes = Array.isArray(mapped) ? mapped.length : 1;
+          if (prefixIndex + 1 < totalPrefixes) {
+            prefixIndex++;
+            cursor = undefined;
+            continue;
+          }
+          break;
+        }
         cursor = page.cursor;
       }
       if (count) {
